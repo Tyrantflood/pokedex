@@ -9,6 +9,7 @@ import type { StillImage } from "./art";
 const PULSES_S = [0.5, 0.38, 0.29, 0.22, 0.17, 0.13, 0.1];
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+// (An animated sprite's white copy is the live GIF itself, filtered: it moves with the sprite underneath.)
 const decode = (src: string) => {
   const img = new Image();
   img.src = src;
@@ -22,7 +23,7 @@ export const EVOLVE_REVEAL_S = 0.85;
  * The evolution sequence, drawn over the sprite: the old form turns into a white silhouette, pulses
  * faster and faster, a flash covers the swap, and the new form's silhouette is revealed. The scan
  * reveal then plays on its own. Everything animates transform/opacity only (the silhouette is a
- * static filter on an image, not an animated one).
+ * filter on a copy of the live sprite, whose opacity is what pulses).
  */
 export function EvolveFx({
   from,

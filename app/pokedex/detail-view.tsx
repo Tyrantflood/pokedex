@@ -467,19 +467,24 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
     commitSwitch(target, "quick");
   };
 
-  // The white silhouettes are static: an animated sprite is frozen to its first frame first, so the pulsing
-  // never runs a filter on every animation frame. (Cached by then, so this is normally instant.)
+  // The white silhouette is a filtered *copy of the live sprite* (same image URL, so it plays in step with the
+  // one underneath), never a frozen frame. The new form's GIF is decoded before the sequence starts, so the
+  // swap at the flash is clean.
   const starting = useRef(false);
   const startEvolution = (from: ArtImage, to: ArtImage, target: PokemonSummary) => {
     if (starting.current) return;
     starting.current = true;
-    const still = (img: ArtImage): Promise<StillImage> =>
-      img.animated
-        ? Promise.race([firstFrame(img.src), sleep(1500).then(() => null)]).then((url) => (url ? { src: url, pixelated: img.pixelated } : { src: img.src, pixelated: img.pixelated }))
-        : Promise.resolve({ src: img.src, pixelated: img.pixelated });
-    Promise.all([still(from), still(to)]).then(([f, t]) => {
+    // What is on screen now: the GIF if it has loaded, else the static stand-in.
+    const shownNow: StillImage = from.animated && !liveGifs.has(from.src) ? from.fallback : { src: from.src, pixelated: from.pixelated };
+    const incoming: Promise<StillImage> = to.animated
+      ? Promise.race([decodeImage(to.src).then(() => true), sleep(1500).then(() => false)]).then((ok) => {
+          if (ok) setLiveGifs((prev) => new Set(prev).add(to.src));
+          return ok ? { src: to.src, pixelated: to.pixelated } : to.fallback;
+        })
+      : Promise.resolve({ src: to.src, pixelated: to.pixelated });
+    incoming.then((t) => {
       starting.current = false;
-      if (!closing.current) setEvo({ from: f, to: t, target });
+      if (!closing.current) setEvo({ from: shownNow, to: t, target });
     });
   };
 
@@ -919,10 +924,10 @@ function ScanArt({
   const standInFit = useFitTransform(base.animated ? base.fallback.src : null);
   const baseShown = visible(base, baseStill);
   const shinyShown = shinyArt ? visible(shinyArt, shinyStill) : null;
-  // Silhouette: the first frame of an animated sprite once extracted; until then (or if it can't be) the
-  // static sprite, so the scan never waits for it.
-  const silImage: StillImage = base.animated ? (baseStill ? { src: baseStill, pixelated: base.pixelated } : base.fallback) : base;
-  const silSrc = silImage.src;
+  // Animated sprites get their silhouette from a *live filtered copy* of the same GIF drawn on top (so it moves
+  // with the Pokémon), which the scan clips away top to bottom to reveal the unfiltered one underneath.
+  // Static images keep the older arrangement: a dark silhouette below, the real image revealed over it.
+  const overlay = base.animated && !reduce;
 
   // The shiny image only exists once it has been wanted, and is crossfaded over the normal one.
   // Its starting opacity is fixed at mount (a stable style prop) so React never fights the animation.
@@ -961,9 +966,8 @@ function ScanArt({
     };
   }, [animate, scope, shiny, shinySrc, reduce]);
 
-  // The silhouette exists only until the reveal has finished; after that nothing but the real image remains.
-  // (An animated sprite's silhouette needs its first frame extracted, so it can appear a moment after
-  // the image is ready: the scan waits for it, and the layer is removed rather than merely faded.)
+  // The silhouette exists only until the reveal has finished; after that nothing but the real image remains
+  // (the layer is removed rather than merely faded, so a filtered copy never keeps running behind the sprite).
   const [revealDone, setRevealDone] = useState(false);
   const { t0 } = timeline;
   useEffect(() => {
@@ -972,10 +976,14 @@ function ScanArt({
     let alive = true;
     const delay = remaining({ t0, go, reduce }, startDelay);
     const running = [
-      animate("[data-s=full]", { clipPath: ["inset(0 0 100% 0)", "inset(0 0 0% 0)"] }, { duration: SCAN_S, delay, ease: SCAN_EASE }),
       animate("[data-s=bar]", { top: ["0%", "100%"] }, { duration: SCAN_S, delay, ease: SCAN_EASE }),
       animate("[data-s=bar]", { opacity: [0, 1, 1, 0] }, { duration: SCAN_S, delay, ease: "linear", times: [0, 0.06, 0.94, 1] }),
-      animate("[data-s=sil]", { opacity: 0 }, { duration: 0.25, delay: delay + SCAN_S }),
+      ...(overlay
+        ? [animate("[data-s=sil]", { clipPath: ["inset(0% 0 0 0)", "inset(100% 0 0 0)"] }, { duration: SCAN_S, delay, ease: SCAN_EASE })]
+        : [
+            animate("[data-s=full]", { clipPath: ["inset(0 0 100% 0)", "inset(0 0 0% 0)"] }, { duration: SCAN_S, delay, ease: SCAN_EASE }),
+            animate("[data-s=sil]", { opacity: 0 }, { duration: 0.25, delay: delay + SCAN_S }),
+          ]),
     ];
     Promise.all(running.map((a) => a.finished)).then(() => {
       if (alive) setRevealDone(true);
@@ -984,24 +992,22 @@ function ScanArt({
       alive = false;
       running.forEach((a) => a.stop());
     };
-  }, [animate, reduce, go, scan, t0, startDelay]);
+  }, [animate, reduce, go, scan, overlay, t0, startDelay]);
+
+  // The overlay copies whatever is on screen: the shiny sprite if it was already shiny at mount, else the normal one.
+  const overlaySource = startedShiny && shinyShown ? shinyShown : baseShown;
+  const overlayFit = overlaySource && base.animated && overlaySource.src === base.fallback.src ? standInFit : undefined;
+  const silStyle: CSSProperties = { filter: `brightness(0) drop-shadow(0 0 10px ${color}aa)` };
+  const showSil = !reduce && scan && !revealDone;
 
   const shadow = "drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]";
   return (
     <div ref={scope} className="absolute inset-0">
-      {!reduce && scan && !revealDone && (
-        <ArtLayer
-          layer="sil"
-          fit={base.animated && silSrc === base.fallback.src ? standInFit : undefined}
-          src={silSrc}
-          pixelated={silImage.pixelated}
-          bob={base.bob}
-          reduce={reduce}
-          style={{ filter: `brightness(0) drop-shadow(0 0 10px ${color}aa)` }}
-        />
+      {showSil && !overlay && (
+        <ArtLayer layer="sil" src={base.src} pixelated={base.pixelated} bob={base.bob} reduce={reduce} style={silStyle} />
       )}
-      {/* The scan clips this wrapper, so the shiny image is revealed by the scan too. */}
-      <div data-s="full" className="absolute inset-0" style={{ clipPath: reduce || !scan ? undefined : "inset(0 0 100% 0)" }}>
+      {/* For static images the scan clips this wrapper, so the shiny image is revealed by the scan too. */}
+      <div data-s="full" className="absolute inset-0" style={{ clipPath: reduce || !scan || overlay ? undefined : "inset(0 0 100% 0)" }}>
         {baseShown && (
           <ArtLayer
             layer="base"
@@ -1027,6 +1033,17 @@ function ScanArt({
           />
         )}
       </div>
+      {showSil && overlay && overlaySource && (
+        <ArtLayer
+          layer="sil"
+          src={overlaySource.src}
+          pixelated={overlaySource.pixelated}
+          bob={false}
+          fit={overlayFit}
+          reduce={reduce}
+          style={{ ...silStyle, clipPath: "inset(0% 0 0 0)" }}
+        />
+      )}
       {burst > 0 && !reduce && <Sparkles key={burst} />}
       {!reduce && scan && (
         <div

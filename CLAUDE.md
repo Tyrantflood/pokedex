@@ -129,8 +129,7 @@ The Vercel layout is assumed from the Build Output API, not observed.
   (Megas etc.): they get the static pixel sprite with a CSS idle bob (`.art-bob`, phase-aligned to the wall clock so layers stay in sync). A GIF that
   fails to decode is added to `broken` and falls back the same way. `DISK_VERSION` is 4 because the cached shape gained `animated`.
 - Animated is the default; Artwork is the thing you switch to. The choice is remembered in `sessionStorage` `pokedex:detail-mode`. Changing it replays only the scan, not the readouts (separate art clock).
-- Silhouettes (scan and evolution) and reduced motion use the first frame of the GIF (canvas to blob URL, cached), so no filter ever runs on an
-  animated image. Reduced motion truly pauses. Comparison mode always uses static artwork.
+- Reduced motion pauses on the first frame of the GIF (`lib/first-frame.ts`: canvas to blob URL, cached). Comparison mode always uses static artwork.
 - The scan silhouette exists only until the reveal finishes: it is unmounted (not just faded) and the scan waits for it to exist. Once it stayed behind the moving GIF, because its first frame arrives asynchronously and the fade-out had already run on nothing. The shiny crossfade likewise hides the normal layer once fully shiny.
 
 - **The scan never waits for the GIF.** Card hover/focus (`preloadDetailArt` in `art.ts`) warms the GIF, its first frame and the static sprite.
@@ -139,6 +138,17 @@ The Vercel layout is assumed from the Build Output API, not observed.
   arrival. Measured on a throttled network (cold click, slow 3G): the bar starts about 50 ms after its scheduled landing time (about 700 ms after the
   click; before the change 2.3-2.7 s). Artwork <-> Animated is a plain 0.25 s crossfade: no silhouette, scan or readout replay; the button updates
   at once and the picture follows once decoded (700 ms at most).
+
+- **Live silhouettes (Animated mode).** The dark scan silhouette and the white evolution silhouette are *filtered copies of the live GIF*
+  (`brightness(0)`, and `brightness(0) invert(1)` for white), never frozen frames: a frozen silhouette stopped matching the moving sprite on
+  flyers. Scan: the filtered copy sits **on top** and is clipped away top to bottom (`clip-path: inset(top% 0 0 0)`) revealing the unfiltered one
+  underneath; it is unmounted when the reveal ends. Evolution: the white copy of the old GIF pulses over the live sprite; at the flash it switches to the
+  new form's GIF (decoded beforehand). Static images (Artwork mode, bobbing stand-ins) keep the older arrangement (silhouette below, real image revealed over it).
+  - Sync: copies of one GIF URL stay in the same frame in Chromium, checked by pixel-differencing (`mix-blend-mode: difference` on a black backdrop) on
+    the real layers for Charizard, Pidgeot, Zubat, Gengar and four evolutions: no pose differences, only 1 px edge noise where the sprite lands on a
+    fractional pixel. Firefox and Safari were not tested. **Do not "verify" this with canvas `drawImage`**: it only ever returns a GIF's first frame.
+    Per-frame canvas drawing was therefore not used (it would need WebCodecs `ImageDecoder`).
+  - Cost (phone viewport, 4x CPU): scan 66 frames/s, 8 ms/s raster; idle with a GIF playing 60 frames/s, 2 ms/s; evolution 61 frames/s, 3 ms/s.
 
 ### Other settled choices
 - **Night mode:** a static tinted `.night-veil` layer faded by opacity (midnight to 6:00 local). A CSS `filter`
