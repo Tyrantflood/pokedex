@@ -12,10 +12,12 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { loadEvolutionChain, type EvolutionResult } from "@/app/actions";
 import type { EvolutionNode } from "@/lib/evolution";
+import { stopCry } from "@/lib/cry-audio";
 import { preloadImage } from "@/lib/preload-image";
 import type { PokemonSummary } from "@/lib/summary";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import { measureCard, type CardRects } from "./card-rects";
+import { CryPanel } from "./cry-panel";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 const OPEN_S = 0.6;
@@ -197,6 +199,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   const requestClose = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
+    stopCry();
 
     // Re-measure: the grid may have been scrolled, resized or re-filtered since opening.
     const rects = measureCard(original.id);
@@ -300,6 +303,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   const selectStage = (target: PokemonSummary) => {
     if (closing.current || target.id === current.id) return;
     preloadImage(target.artwork);
+    stopCry();
     setSwitched(true);
     setT0(performance.now());
     setCurrent(target);
@@ -350,8 +354,10 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
           data-dismiss="true"
           className="mx-auto grid min-h-full max-w-5xl content-center items-start gap-8 px-6 py-20 md:grid-cols-[auto_minmax(0,1fr)] md:gap-14"
         >
-          {/* Sprite slot: the flying sprite lands here. Stays in view while a long evolution tree scrolls. */}
-          <div ref={slotRef} className="relative mx-auto aspect-square w-[min(78vw,50vh,440px)] md:sticky md:top-20">
+          {/* Left column stays in view while a long evolution tree scrolls. */}
+          <div className="mx-auto flex w-[min(78vw,50vh,440px)] flex-col gap-4 md:sticky md:top-20">
+          {/* Sprite slot: the flying sprite lands here. */}
+          <div ref={slotRef} className="relative aspect-square w-full">
             <div ref={spriteRef} data-d="sprite" className="absolute inset-0 origin-top-left" style={{ opacity: 0 }}>
               {/* Always the original card's sprite: only used for the flight in and back out. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -377,6 +383,12 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                 </AnimatePresence>
               </div>
             </div>
+          </div>
+
+          {/* Fades in with the rest of the content (data-d="chrome"). Remounts per Pokémon. */}
+          <div data-d="chrome" style={{ opacity: 0 }}>
+            <CryPanel key={current.id} url={current.cry} color={color} name={name} reduceMotion={reduceMotion} />
+          </div>
           </div>
 
           <div data-d="content" data-dismiss="" className="min-w-0 space-y-7" style={{ opacity: 0 }}>

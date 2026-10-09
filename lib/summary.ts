@@ -18,6 +18,8 @@ export interface PokemonSummary {
   sprite: string;
   /** True only for real pixel sprites, which should be drawn with crisp edges. */
   pixel: boolean;
+  /** URL of the cry audio (Ogg), if the form has one. */
+  cry: string | null;
   /** Official artwork for the detail view (null if the form has none). */
   artwork: string | null;
   generation: number;
@@ -52,6 +54,7 @@ export function toSummary(p: Pokemon): PokemonSummary {
     types: p.types,
     sprite: p.sprites.normal ?? p.artwork.normal ?? PLACEHOLDER_SPRITE,
     pixel: p.sprites.normal !== null,
+    cry: p.cries.latest ?? p.cries.legacy,
     artwork: p.artwork.normal,
     generation: generationOf(p.number),
     stats: p.stats,

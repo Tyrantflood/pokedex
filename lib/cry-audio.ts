@@ -1,0 +1,145 @@
+/**
+ * Cry playback through the Web Audio API, in a form the oscilloscope can read.
+ *
+ * Why fetch + decodeAudioData instead of an <audio> element: the cry files live on
+ * raw.githubusercontent.com. They are served with `Access-Control-Allow-Origin: *`, but
+ * an <audio> element loads them in no-CORS mode unless `crossorigin="anonymous"` is set,
+ * and a MediaElementSource fed by such an element is muted for analysis (the analyser reads
+ * pure silence). fetch() in CORS mode sidesteps that, and a decoded AudioBuffer can be
+ * replayed instantly and measured exactly.
+ */
+
+export type CryErrorReason = "network" | "decode" | "unsupported";
+
+export class CryError extends Error {
+  constructor(
+    readonly reason: CryErrorReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CryError";
+  }
+}
+
+const MAX_CACHED_BUFFERS = 24;
+const DECODE_SAMPLE_RATE = 48000;
+const OUTPUT_GAIN = 0.7;
+
+// Decoded cries, least recently used first (Map keeps insertion order).
+const buffers = new Map<string, AudioBuffer>();
+const inflight = new Map<string, Promise<AudioBuffer>>();
+
+/**
+ * Fetches and decodes a cry. Cached, and concurrent calls share one request, so it is safe
+ * to call early (e.g. when the detail view opens) so that pressing play is instant.
+ * Decoding uses an OfflineAudioContext, which needs no user gesture.
+ */
+export function loadCry(url: string): Promise<AudioBuffer> {
+  const cached = buffers.get(url);
+  if (cached) {
+    buffers.delete(url);
+    buffers.set(url, cached);
+    return Promise.resolve(cached);
+  }
+  const pending = inflight.get(url);
+  if (pending) return pending;
+
+  const request = (async () => {
+    if (typeof OfflineAudioContext === "undefined") throw new CryError("unsupported", "Web Audio isn't available in this browser.");
+
+    let bytes: ArrayBuffer;
+    try {
+      const res = await fetch(url, { mode: "cors" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      bytes = await res.arrayBuffer();
+    } catch {
+      throw new CryError("network", "Couldn't load the cry.");
+    }
+
+    try {
+      const buffer = await new OfflineAudioContext(1, 1, DECODE_SAMPLE_RATE).decodeAudioData(bytes);
+      buffers.set(url, buffer);
+      while (buffers.size > MAX_CACHED_BUFFERS) buffers.delete(buffers.keys().next().value!);
+      return buffer;
+    } catch {
+      // The files are Ogg Vorbis; some browsers (notably Safari) can't decode that.
+      throw new CryError("decode", "This browser can't decode the cry's Ogg Vorbis audio.");
+    }
+  })().finally(() => inflight.delete(url));
+
+  inflight.set(url, request);
+  return request;
+}
+
+let context: AudioContext | null = null;
+function getContext(): AudioContext {
+  if (typeof AudioContext === "undefined") throw new CryError("unsupported", "Web Audio isn't available in this browser.");
+  context ??= new AudioContext();
+  return context;
+}
+
+export interface CryPlayback {
+  /** Sits directly after the source, before volume, so it sees the cry's true waveform. */
+  analyser: AnalyserNode;
+  duration: number;
+  /** Resolves when playback finishes or is stopped. */
+  ended: Promise<void>;
+  stop: () => void;
+}
+
+let current: CryPlayback | null = null;
+
+/** Stops whichever cry is playing, if any. */
+export function stopCry(): void {
+  current?.stop();
+}
+
+/**
+ * Plays a cry. Call from a user gesture (the AudioContext is created/resumed here). Only one
+ * cry plays at a time: starting a new one stops the previous.
+ */
+export async function playCry(url: string): Promise<CryPlayback> {
+  stopCry();
+  const ctx = getContext();
+  const resumed = ctx.resume(); // first thing, while the click still counts as a gesture
+  const buffer = await loadCry(url);
+  await resumed;
+
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 2048;
+  const volume = ctx.createGain();
+  volume.gain.value = OUTPUT_GAIN;
+  source.connect(analyser);
+  analyser.connect(volume);
+  volume.connect(ctx.destination);
+
+  let stopped = false;
+  const ended = new Promise<void>((resolve) => {
+    source.onended = () => {
+      // Only the source goes away. The analyser stays connected so it keeps reading the
+      // (now silent) signal; disconnecting it would freeze it on its last samples.
+      source.disconnect();
+      if (current === playback) current = null;
+      resolve();
+    };
+  });
+  const playback: CryPlayback = {
+    analyser,
+    duration: buffer.duration,
+    ended,
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        source.stop();
+      } catch {
+        // already stopped
+      }
+    },
+  };
+  current = playback;
+  source.start();
+  return playback;
+}
