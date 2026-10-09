@@ -133,6 +133,13 @@ The Vercel layout is assumed from the Build Output API, not observed.
   animated image. Reduced motion truly pauses. Comparison mode always uses static artwork.
 - The scan silhouette exists only until the reveal finishes: it is unmounted (not just faded) and the scan waits for it to exist. Once it stayed behind the moving GIF, because its first frame arrives asynchronously and the fade-out had already run on nothing. The shiny crossfade likewise hides the normal layer once fully shiny.
 
+- **The scan never waits for the GIF.** Card hover/focus (`preloadDetailArt` in `art.ts`) warms the GIF, its first frame and the static sprite.
+  If the GIF still isn't decoded at click time, the scan starts on schedule using the static pixel sprite (scaled by its visible bounds,
+  `useFitTransform`, so it matches the tight-cropped GIF's size) for both the silhouette and the revealed image, and the GIF replaces it on
+  arrival. Measured on a throttled network (cold click, slow 3G): the bar starts about 50 ms after its scheduled landing time (about 700 ms after the
+  click; before the change 2.3-2.7 s). Artwork <-> Animated is a plain 0.25 s crossfade: no silhouette, scan or readout replay; the button updates
+  at once and the picture follows once decoded (700 ms at most).
+
 ### Other settled choices
 - **Night mode:** a static tinted `.night-veil` layer faded by opacity (midnight to 6:00 local). A CSS `filter`
   on the page would break `position:fixed` overlays and cost frames. `data-night` is set pre-paint by an inline

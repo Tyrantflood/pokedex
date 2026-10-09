@@ -3,7 +3,7 @@
 import { motion, type Variants } from "framer-motion";
 import { memo, useRef, type PointerEvent } from "react";
 import type { PokemonSummary } from "@/lib/summary";
-import { preloadImage } from "@/lib/preload-image";
+import { preloadDetailArt } from "./art";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import { measureCardElement, type CardRects } from "./card-rects";
 
@@ -51,7 +51,7 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, on
   // pointer movement never triggers a React render.
   const onPointerEnter = (e: PointerEvent<HTMLDivElement>) => {
     // Warm the detail view's artwork as soon as the pointer arrives (touch included).
-    preloadImage(p.artwork);
+    preloadDetailArt(p);
     if (e.pointerType === "touch") return;
     e.currentTarget.dataset.hover = "true";
   };
@@ -162,7 +162,7 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, on
           type="button"
           aria-label={`View ${p.name.replace(/-/g, " ")}`}
           onClick={open}
-          onFocus={() => preloadImage(p.artwork)}
+          onFocus={() => preloadDetailArt(p)}
           className="absolute inset-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
         />
         {/* Comparison without dragging: always shown on touch screens, on hover/focus elsewhere. */}

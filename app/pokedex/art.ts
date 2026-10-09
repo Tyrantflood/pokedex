@@ -1,3 +1,6 @@
+import { firstFrame } from "@/lib/first-frame";
+import { preloadImage } from "@/lib/preload-image";
+import { measureSpriteBounds } from "@/lib/sprite-bounds";
 import type { PokemonSummary } from "@/lib/summary";
 
 /** Which kind of image the detail view's sprite slot shows. */
@@ -55,6 +58,23 @@ export function artSet(p: PokemonSummary, mode: ArtMode, broken: ReadonlySet<str
     base: gif(p.animated) ?? bobbing(p.sprite, p.pixel)!,
     shiny: gif(p.animatedShiny) ?? bobbing(p.spriteShiny, true) ?? (p.shinyArtwork ? still(p.shinyArtwork, false) : null),
   };
+}
+
+const NONE: ReadonlySet<string> = new Set();
+
+/**
+ * Warms what the detail view will draw first for this Pokémon, in the mode the user is in: the image
+ * itself (artwork or GIF) and, for a GIF, its first frame (used for the silhouette) and the static
+ * sprite that stands in until the GIF is decoded. Call on hover/focus, so it is usually ready by the click.
+ */
+export function preloadDetailArt(p: PokemonSummary, mode: ArtMode = readArtMode()): void {
+  const { base } = artSet(p, mode, NONE);
+  preloadImage(base.src);
+  if (base.animated) {
+    preloadImage(base.fallback.src);
+    void firstFrame(base.src);
+    measureSpriteBounds(base.fallback.src).catch(() => {}); // to size the stand-in like the GIF
+  }
 }
 
 const MODE_KEY = "pokedex:detail-mode";

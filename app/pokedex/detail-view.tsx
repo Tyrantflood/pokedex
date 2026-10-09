@@ -15,12 +15,13 @@ import type { EvolutionNode } from "@/lib/evolution";
 import { evolvesInto } from "@/lib/evolution-path";
 import { stopCry } from "@/lib/cry-audio";
 import { firstFrame } from "@/lib/first-frame";
+import { measureSpriteBounds } from "@/lib/sprite-bounds";
 import { preloadImage } from "@/lib/preload-image";
 import type { PokemonSummary } from "@/lib/summary";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import { measureCard, type CardRects } from "./card-rects";
 import { CryPanel } from "./cry-panel";
-import { artSet, readArtMode, saveArtMode, type ArtImage, type ArtMode, type ArtSet, type StillImage } from "./art";
+import { artSet, preloadDetailArt, readArtMode, saveArtMode, type ArtImage, type ArtMode, type ArtSet, type StillImage } from "./art";
 import { EVOLVE_REVEAL_S, EvolveFx, Sparkles } from "./evolve-fx";
 import { FlavorText } from "./flavor-text";
 import { TypeFx, fxKindOf, useFrameGuard } from "./type-fx";
@@ -43,6 +44,13 @@ const SWITCH_SCAN_DELAY_S = 0.2;
 const EVOLVE_SCAN_DELAY_S = EVOLVE_REVEAL_S;
 /** The shiny crossfade starts this long after the sparkles, so it lands in the glow. */
 const SHINY_FADE_DELAY_S = 0.22;
+/** Artwork <-> Animated: a plain crossfade of this length. */
+const SWAP_S = 0.25;
+/** Entering and leaving states of the art layer. A swap only fades; a new Pokémon also scales a little. */
+const ART_SWAP = {
+  out: (swap: boolean) => ({ opacity: 0, scale: swap ? 1 : 0.92 }),
+  in: { opacity: 1, scale: 1 },
+};
 /** Length of one idle bob, in seconds (matches .art-bob in globals.css). */
 const BOB_S = 2.6;
 /** Exit and enter time when moving between Pokémon (each half of a quick swap). */
@@ -148,15 +156,19 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   // `current` is what's shown; `original` stays the card we return to.
   const [current, setCurrent] = useState(original);
   type SwitchKind = "open" | "quick" | "evolve";
-  const delayOf = (kind: SwitchKind) => (kind === "evolve" ? EVOLVE_SCAN_DELAY_S : kind === "quick" ? SWITCH_SCAN_DELAY_S : OPEN_SCAN_DELAY_S);
+  const delayOf = (kind: SwitchKind | "swap") => (kind === "evolve" ? EVOLVE_SCAN_DELAY_S : kind === "quick" ? SWITCH_SCAN_DELAY_S : OPEN_SCAN_DELAY_S);
   // The readouts restart when the Pokémon changes; the scan also restarts when only the image style changes.
   const [switchKind, setSwitchKind] = useState<SwitchKind>("open");
-  const [artKind, setArtKind] = useState<SwitchKind>("open");
+  // "swap": only the image style changed (Artwork <-> Animated): a quick crossfade, no scan.
+  const [artKind, setArtKind] = useState<SwitchKind | "swap">("open");
   const scanDelay = delayOf(switchKind);
   // Artwork or animated sprites; remembered for the browser session.
   const [mode, setMode] = useState<ArtMode>(readArtMode);
   // Animated sprites that failed to load (PokéAPI lists a few that 404): treated as missing.
   const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
+  // Animated sprites that have finished loading. Until then the static pixel sprite stands in for them,
+  // so the scan never waits on a GIF.
+  const [liveGifs, setLiveGifs] = useState<ReadonlySet<string>>(() => new Set());
   const art = artSet(current, mode, broken);
   const artKey = `${current.id}:${art.base.src}`;
   // Shiny stays on while moving along the chain (when the next form has a shiny version).
@@ -196,35 +208,41 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   const dropFx = useCallback(() => setFxOn(false), []);
   useFrameGuard(fxOn && !reduceMotion, dropFx);
 
-  // The scan and the readouts wait until the image is decoded (usually already is, thanks to the
-  // hover preload; otherwise this holds both back instead of letting numbers run ahead).
+  // The scan and the readouts wait for a still image to be decoded: the artwork, or for an animated sprite
+  // the static pixel sprite that stands in for it (already on screen on the card, so effectively instant).
+  // The GIF itself is never waited for: it replaces the stand-in when it arrives.
   const baseSrc = art.base.src;
   const baseAnimated = art.base.animated;
+  const gateSrc = art.base.animated ? art.base.fallback.src : art.base.src;
   const shinySrc = art.shiny?.src ?? null;
   useEffect(() => {
     let alive = true;
-    const img = new Image();
-    img.src = baseSrc;
-    const decoded = img.decode().then(
-      () => true,
-      () => false,
-    );
-    Promise.race([decoded, sleep(2500).then(() => true)]).then((ok) => {
+    const decode = (src: string) => {
+      const img = new Image();
+      img.src = src;
+      return img.decode().then(
+        () => true,
+        () => false,
+      );
+    };
+    Promise.race([decode(gateSrc), sleep(2500)]).then(() => {
       if (!alive) return;
-      if (!ok && baseAnimated) {
-        // The animated sprite is missing: re-render with the static fallback instead.
-        setBroken((prev) => new Set(prev).add(baseSrc));
-        return;
-      }
       setReadyId(current.id);
       setReadyArt(`${current.id}:${baseSrc}`);
       // Warm the shiny image too, so the toggle can start its sparkles and crossfade at once.
       preloadImage(shinySrc);
     });
+    if (baseAnimated) {
+      decode(baseSrc).then((ok) => {
+        if (!alive) return;
+        if (ok) setLiveGifs((prev) => new Set(prev).add(baseSrc));
+        else setBroken((prev) => new Set(prev).add(baseSrc)); // missing: the static sprite stays (with its bob)
+      });
+    }
     return () => {
       alive = false;
     };
-  }, [current.id, baseSrc, baseAnimated, shinySrc]);
+  }, [current.id, baseSrc, baseAnimated, gateSrc, shinySrc]);
 
   const color = colorOf(current);
   const name = pretty(current.name);
@@ -401,7 +419,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   };
 
   const commitSwitch = (target: PokemonSummary, kind: "quick" | "evolve") => {
-    const now = performance.now();
+    const now = stamp();
     setSwitchKind(kind);
     setArtKind(kind);
     setT0(now);
@@ -409,25 +427,39 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
     setCurrent(target);
   };
 
+  // The button reflects the choice at once; the picture follows as soon as the new one is decoded.
+  const [wantedMode, setWantedMode] = useState<ArtMode | null>(null);
+  const modeRequest = useRef(0);
   const chooseMode = (next: ArtMode) => {
-    if (next === mode || evo || closing.current) return;
-    setMode(next);
+    if (next === (wantedMode ?? mode) || evo || closing.current) return;
+    const request = ++modeRequest.current;
+    setWantedMode(next);
     saveArtMode(next);
-    preloadImage(artSet(current, next, broken).base.src);
-    // Only the picture changes: it replays the scan reveal, while the numbers stay put.
-    setArtKind("quick");
-    setArtT0(stamp());
+    preloadDetailArt(current, next);
+    // Only the picture changes: once the new one is decoded (waiting a moment at most) it crossfades in,
+    // with no scan or silhouette, and the numbers stay put.
+    const incoming = artSet(current, next, broken).base;
+    const img = new Image();
+    img.src = incoming.src;
+    Promise.race([img.decode().then(() => true, () => false), sleep(700)]).then((ok) => {
+      if (request !== modeRequest.current || closing.current) return; // a newer click took over
+      if (ok && incoming.animated) setLiveGifs((prev) => new Set(prev).add(incoming.src));
+      setArtKind("swap");
+      setMode(next);
+      setWantedMode(null);
+    });
   };
 
   const selectStage = (target: PokemonSummary) => {
     if (closing.current || evo || starting.current || target.id === current.id) return;
-    preloadImage(artSet(target, mode, broken).base.src);
+    preloadDetailArt(target, mode);
     stopCry();
     // Moving *forward* in the chain plays the evolution sequence; going back (or sideways) is the quick switch.
     const forward = evolution !== "loading" && evolution.ok && evolvesInto(evolution.chain, current.species, target.species);
     if (forward && !reduceMotion) {
       const next = artSet(target, mode, broken);
       const nextArt = shiny && next.shiny ? next.shiny : next.base;
+      preloadDetailArt(target, mode);
       preloadImage(nextArt.src);
       startEvolution(showShiny && art.shiny ? art.shiny : art.base, nextArt, target);
       return;
@@ -535,16 +567,28 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                 className={`absolute inset-0 h-full w-full object-contain ${original.pixel ? "[image-rendering:pixelated]" : ""}`}
               />
               <div data-d="art" className="absolute inset-0" style={{ opacity: 0 }}>
-                <AnimatePresence mode="wait" initial={false}>
+                <AnimatePresence mode={artKind === "swap" ? "sync" : "wait"} initial={false} custom={artKind === "swap"}>
                   <motion.div
                     key={artKey}
+                    custom={artKind === "swap"}
                     className="absolute inset-0"
-                    initial={{ opacity: 0, scale: 0.92 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.92 }}
-                    transition={{ duration: SWITCH_S }}
+                    variants={ART_SWAP}
+                    initial="out"
+                    animate="in"
+                    exit="out"
+                    transition={{ duration: artKind === "swap" ? SWAP_S : SWITCH_S }}
                   >
-                    <ScanArt name={name} art={art} color={color} startDelay={delayOf(artKind)} timeline={artTimeline} shiny={showShiny} burst={burst} />
+                    <ScanArt
+                      name={name}
+                      art={art}
+                      color={color}
+                      startDelay={delayOf(artKind)}
+                      timeline={artTimeline}
+                      shiny={showShiny}
+                      burst={burst}
+                      scan={artKind !== "swap"}
+                      live={!art.base.animated || liveGifs.has(art.base.src)}
+                    />
                   </motion.div>
                 </AnimatePresence>
                 {evo && (
@@ -569,8 +613,10 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                 <button
                   key={m}
                   type="button"
-                  aria-pressed={mode === m}
+                  aria-pressed={(wantedMode ?? mode) === m}
                   onClick={() => chooseMode(m)}
+                  onPointerEnter={() => preloadDetailArt(current, m)}
+                  onFocus={() => preloadDetailArt(current, m)}
                   className="rounded-full px-3.5 py-1 capitalize text-white/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 aria-pressed:bg-white/20 aria-pressed:text-white"
                 >
                   {m}
@@ -734,6 +780,33 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
 }
 
 /**
+ * A CSS transform that scales a padded pixel sprite so its visible part fills the slot the way a GIF
+ * (which is cropped tight to the creature) does. The static sprite stands in while a GIF loads, and without
+ * this it would be drawn much smaller and then jump when the GIF replaced it. Undefined until measured.
+ */
+function useFitTransform(src: string | null): string | undefined {
+  const [result, setResult] = useState<{ src: string; transform: string } | null>(null);
+  useEffect(() => {
+    if (!src) return;
+    let alive = true;
+    measureSpriteBounds(src)
+      .then((b) => {
+        if (!alive || !b.measured) return;
+        const big = Math.max(b.naturalWidth, b.naturalHeight);
+        const k = big / Math.max(b.right - b.left, b.bottom - b.top);
+        const dx = (-((b.left + b.right) / 2 - b.naturalWidth / 2) / big) * 100;
+        const dy = (-((b.top + b.bottom) / 2 - b.naturalHeight / 2) / big) * 100;
+        setResult({ src, transform: `scale(${k.toFixed(3)}) translate(${dx.toFixed(2)}%, ${dy.toFixed(2)}%)` });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [src]);
+  return result?.src === src ? result.transform : undefined;
+}
+
+/**
  * The first frame of an animated image: `undefined` while it is being extracted, `null` if it can't be
  * (callers then fall back), and the still image's URL otherwise. Not animated: always `null`.
  */
@@ -768,6 +841,7 @@ function ArtLayer({
   style,
   alt = "",
   layer,
+  fit,
 }: {
   src: string;
   pixelated: boolean;
@@ -777,6 +851,8 @@ function ArtLayer({
   style?: CSSProperties;
   alt?: string;
   layer: string;
+  /** A transform that enlarges the visible part of a padded sprite (see useFitTransform). */
+  fit?: string;
 }) {
   const [phase] = useState(() => (performance.now() / 1000) % BOB_S);
   const bobbing = bob && !reduce;
@@ -788,7 +864,7 @@ function ArtLayer({
       alt={alt}
       draggable={false}
       className={`absolute inset-0 h-full w-full object-contain ${pixelated ? "[image-rendering:pixelated]" : ""} ${bobbing ? "art-bob" : ""} ${className}`}
-      style={bobbing ? { ...style, animationDelay: `-${phase}s` } : style}
+      style={bobbing ? { ...style, animationDelay: `-${phase}s` } : fit ? { ...style, transform: fit } : style}
     />
   );
 }
@@ -809,6 +885,8 @@ function ScanArt({
   timeline,
   shiny,
   burst,
+  scan,
+  live,
 }: {
   name: string;
   art: ArtSet;
@@ -818,6 +896,10 @@ function ScanArt({
   shiny: boolean;
   /** Counts shiny toggles; each change plays a sparkle burst. 0 = none yet. */
   burst: number;
+  /** False when only the image style changed: the image is simply there, with no silhouette or scan. */
+  scan: boolean;
+  /** False while an animated sprite is still loading: its static stand-in is drawn until then. */
+  live: boolean;
 }) {
   const { reduce, go } = timeline;
   const [scope, animate] = useAnimate<HTMLDivElement>();
@@ -828,14 +910,19 @@ function ScanArt({
   const shinyStill = useStill(shinyArt);
   /** What to draw for an image: itself, or (paused for reduced motion) its first frame. */
   const visible = (img: ArtImage, still: string | null | undefined): (StillImage & { bob: boolean }) | null => {
-    if (!img.animated || !reduce) return img;
-    if (still === undefined) return null; // still being extracted
+    if (!img.animated) return img;
+    // Not loaded yet: the static sprite stands in, and the GIF replaces it on arrival.
+    if (!reduce) return live ? img : { ...img.fallback, bob: false };
+    // Reduced motion: paused on the first frame (the static sprite until that has been extracted).
     return { ...(still ? { src: still, pixelated: img.pixelated } : img.fallback), bob: false };
   };
+  const standInFit = useFitTransform(base.animated ? base.fallback.src : null);
   const baseShown = visible(base, baseStill);
   const shinyShown = shinyArt ? visible(shinyArt, shinyStill) : null;
-  // Silhouette: the first frame of an animated sprite (or the sprite itself if there is none).
-  const silSrc = base.animated ? (baseStill === undefined ? null : (baseStill ?? base.src)) : base.src;
+  // Silhouette: the first frame of an animated sprite once extracted; until then (or if it can't be) the
+  // static sprite, so the scan never waits for it.
+  const silImage: StillImage = base.animated ? (baseStill ? { src: baseStill, pixelated: base.pixelated } : base.fallback) : base;
+  const silSrc = silImage.src;
 
   // The shiny image only exists once it has been wanted, and is crossfaded over the normal one.
   // Its starting opacity is fixed at mount (a stable style prop) so React never fights the animation.
@@ -878,11 +965,10 @@ function ScanArt({
   // (An animated sprite's silhouette needs its first frame extracted, so it can appear a moment after
   // the image is ready: the scan waits for it, and the layer is removed rather than merely faded.)
   const [revealDone, setRevealDone] = useState(false);
-  const silReady = silSrc !== null;
   const { t0 } = timeline;
   useEffect(() => {
     // Reduced motion: straight to the final, fully revealed state. Otherwise wait for the image.
-    if (reduce || !go || !silReady) return;
+    if (reduce || !go || !scan) return;
     let alive = true;
     const delay = remaining({ t0, go, reduce }, startDelay);
     const running = [
@@ -898,26 +984,28 @@ function ScanArt({
       alive = false;
       running.forEach((a) => a.stop());
     };
-  }, [animate, reduce, go, silReady, t0, startDelay]);
+  }, [animate, reduce, go, scan, t0, startDelay]);
 
   const shadow = "drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]";
   return (
     <div ref={scope} className="absolute inset-0">
-      {!reduce && silSrc && !revealDone && (
+      {!reduce && scan && !revealDone && (
         <ArtLayer
           layer="sil"
+          fit={base.animated && silSrc === base.fallback.src ? standInFit : undefined}
           src={silSrc}
-          pixelated={base.pixelated}
+          pixelated={silImage.pixelated}
           bob={base.bob}
           reduce={reduce}
           style={{ filter: `brightness(0) drop-shadow(0 0 10px ${color}aa)` }}
         />
       )}
       {/* The scan clips this wrapper, so the shiny image is revealed by the scan too. */}
-      <div data-s="full" className="absolute inset-0" style={{ clipPath: reduce ? undefined : "inset(0 0 100% 0)" }}>
+      <div data-s="full" className="absolute inset-0" style={{ clipPath: reduce || !scan ? undefined : "inset(0 0 100% 0)" }}>
         {baseShown && (
           <ArtLayer
             layer="base"
+            fit={base.animated && baseShown.src === base.fallback.src ? standInFit : undefined}
             src={baseShown.src}
             pixelated={baseShown.pixelated}
             bob={baseShown.bob}
@@ -940,7 +1028,7 @@ function ScanArt({
         )}
       </div>
       {burst > 0 && !reduce && <Sparkles key={burst} />}
-      {!reduce && (
+      {!reduce && scan && (
         <div
           data-s="bar"
           aria-hidden
@@ -1152,8 +1240,8 @@ function EvolutionStage({
       aria-label={isCurrent ? `${pretty(node.species)} (shown)` : `View ${pretty(node.species)}`}
       aria-current={highlighted ? "true" : undefined}
       // Warm the artwork so the scan can start the moment the view switches.
-      onPointerEnter={() => preloadImage(target.artwork)}
-      onFocus={() => preloadImage(target.artwork)}
+      onPointerEnter={() => preloadDetailArt(target)}
+      onFocus={() => preloadDetailArt(target)}
       onClick={() => onSelect(target)}
     >
       {body}
