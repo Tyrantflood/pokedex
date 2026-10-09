@@ -1,6 +1,6 @@
 import type { Pokemon, PokemonType } from "./pokemon-types";
 import { generationOf } from "./generations";
-import { spriteUrl } from "./sprites";
+import { PLACEHOLDER_SPRITE } from "./sprites";
 
 /** The slim shape sent to the browser: only what a card and the filters need. */
 export interface PokemonSummary {
@@ -10,7 +10,12 @@ export interface PokemonSummary {
   /** "Mega", "G-Max" or a region name for notable forms; null otherwise. */
   tag: string | null;
   types: PokemonType[];
-  image: string;
+  /** Card image: the small pixel sprite when there is one, else artwork, else a placeholder. */
+  sprite: string;
+  /** True only for real pixel sprites, which should be drawn with crisp edges. */
+  pixel: boolean;
+  /** Official artwork for the detail view (null if the form has none). */
+  artwork: string | null;
   generation: number;
 }
 
@@ -34,8 +39,9 @@ export function toSummary(p: Pokemon): PokemonSummary {
     name: p.name,
     tag: formTag(p),
     types: p.types,
-    // Official artwork is smooth at card size; pixel sprite and placeholder are fallbacks.
-    image: p.artwork.normal ?? spriteUrl(p),
+    sprite: p.sprites.normal ?? p.artwork.normal ?? PLACEHOLDER_SPRITE,
+    pixel: p.sprites.normal !== null,
+    artwork: p.artwork.normal,
     generation: generationOf(p.number),
   };
 }

@@ -5,6 +5,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, us
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { PokemonSummary } from "@/lib/summary";
 import { Controls } from "./controls";
+import { DetailView } from "./detail-view";
 import { PokemonCard } from "./pokemon-card";
 
 const GAP = 16;
@@ -35,6 +36,7 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
   const [animateExit, setAnimateExit] = useState(false);
   const [introDone, setIntroDone] = useState(false);
   const [layout, setLayout] = useState({ width: 0, margin: 0 });
+  const [selected, setSelected] = useState<PokemonSummary | null>(null);
   const [rowRange, setRowRange] = useState({ first: 0, last: 6 });
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -100,6 +102,8 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
       if (window.scrollY > target) window.scrollTo({ top: target });
     }
   }, []);
+
+  const closeDetail = useCallback(() => setSelected(null), []);
 
   const changeQuery = (q: string) => {
     setQuery(q);
@@ -195,6 +199,7 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
                 height={CARD_HEIGHT}
                 delay={introDone ? 0 : Math.min(index, STAGGER_MAX_CARDS) * STAGGER_STEP_S}
                 animateIn={!introDone || animateExit}
+                onOpen={setSelected}
               />
             );
           })}
@@ -209,6 +214,9 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
           </button>
         </div>
       )}
+      <AnimatePresence>
+        {selected && <DetailView key={selected.id} pokemon={selected} onClose={closeDetail} />}
+      </AnimatePresence>
     </MotionConfig>
   );
 }

@@ -3,6 +3,7 @@
 import { motion, type Variants } from "framer-motion";
 import { memo, useRef, type PointerEvent } from "react";
 import type { PokemonSummary } from "@/lib/summary";
+import { preloadImage } from "@/lib/preload-image";
 import { TYPE_COLORS } from "@/lib/type-colors";
 
 const MAX_TILT_DEG = 14;
@@ -32,9 +33,10 @@ interface Props {
    * mounting cheap during fast scrolling.
    */
   animateIn: boolean;
+  onOpen: (p: PokemonSummary) => void;
 }
 
-function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn }: Props) {
+function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, onOpen }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const frame = useRef(0);
@@ -43,6 +45,8 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn }: 
   // Tilt and shine are driven by CSS variables written straight to the DOM, so
   // pointer movement never triggers a React render.
   const onPointerEnter = (e: PointerEvent<HTMLDivElement>) => {
+    // Warm the detail view's artwork as soon as the pointer arrives (touch included).
+    preloadImage(p.artwork);
     if (e.pointerType === "touch") return;
     e.currentTarget.dataset.hover = "true";
   };
@@ -123,14 +127,21 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn }: 
         <div className="holo-sprite">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={p.image}
+            src={p.sprite}
             alt=""
             draggable={false}
             decoding="async"
-            className="sprite-bob h-full w-full object-contain"
+            className={`sprite-bob ${p.pixel ? "sprite-pixel" : "sprite-smooth"}`}
             style={{ animationDelay: `${-(p.id % 9) * 0.37}s` }}
           />
         </div>
+        <button
+          type="button"
+          aria-label={`View ${p.name.replace(/-/g, " ")}`}
+          onClick={() => onOpen(p)}
+          onFocus={() => preloadImage(p.artwork)}
+          className="absolute inset-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+        />
       </div>
     </motion.div>
   );
