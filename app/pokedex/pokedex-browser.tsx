@@ -5,9 +5,12 @@ import type { CardRects } from "./card-rects";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { PokemonSummary } from "@/lib/summary";
+import { CompareTray } from "./compare-tray";
+import { CompareView } from "./compare-view";
 import { Controls } from "./controls";
 import { DetailView } from "./detail-view";
 import { PokemonCard } from "./pokemon-card";
+import { useCardDrag } from "./use-card-drag";
 
 const GAP = 16;
 const MIN_CARD_WIDTH = 172;
@@ -39,6 +42,9 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
   const [layout, setLayout] = useState({ width: 0, margin: 0 });
   const [selected, setSelected] = useState<{ pokemon: PokemonSummary; origin: CardRects } | null>(null);
   const [rowRange, setRowRange] = useState({ first: 0, last: 6 });
+  // Comparison: `pending` is the first Pokémon picked, waiting for a second; `comparison` is the open view.
+  const [pending, setPending] = useState<PokemonSummary | null>(null);
+  const [comparison, setComparison] = useState<{ a: PokemonSummary; b: PokemonSummary } | null>(null);
 
   const listRef = useRef<HTMLDivElement>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
@@ -104,11 +110,46 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
     }
   }, []);
 
-  const openDetail = useCallback((pokemon: PokemonSummary, origin: CardRects) => setSelected({ pokemon, origin }), []);
+  const openComparison = useCallback((a: PokemonSummary, b: PokemonSummary) => {
+    setPending(null);
+    setComparison({ a, b });
+  }, []);
+  // Pressing Compare picks the first Pokémon, then the second opens the comparison.
+  const startCompare = useCallback(
+    (p: PokemonSummary) => {
+      if (!pending) setPending(p);
+      else if (pending.id === p.id) setPending(null);
+      else openComparison(pending, p);
+    },
+    [pending, openComparison],
+  );
+  // While a first Pokémon is waiting, choosing any other card (not just its Compare button) completes the pair.
+  const openDetail = useCallback(
+    (pokemon: PokemonSummary, origin: CardRects) => {
+      if (pending && pending.id !== pokemon.id) openComparison(pending, pokemon);
+      else {
+        setPending(null);
+        setSelected({ pokemon, origin });
+      }
+    },
+    [pending, openComparison],
+  );
   // Evolution stages are species; resolve each to its default form for the detail view.
   const defaultForms = useMemo(() => new Map(pokemon.filter((p) => p.base).map((p) => [p.species, p])), [pokemon]);
   const resolveSpecies = useCallback((species: string) => defaultForms.get(species), [defaultForms]);
   const closeDetail = useCallback(() => setSelected(null), []);
+  const closeComparison = useCallback(() => setComparison(null), []);
+
+  const byId = useMemo(() => new Map(pokemon.map((p) => [p.id, p])), [pokemon]);
+  const lookup = useCallback((id: number) => byId.get(id), [byId]);
+  useCardDrag({ listRef, lookup, onDrop: openComparison, topInset: () => controlsRef.current?.offsetHeight ?? 0 });
+
+  useEffect(() => {
+    if (!pending) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPending(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pending]);
 
   const changeQuery = (q: string) => {
     setQuery(q);
@@ -188,6 +229,7 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
         ref={listRef}
         role="list"
         aria-label="Pokémon"
+        data-comparing={pending ? "true" : undefined}
         className="relative"
         style={{ height: rowCount > 0 ? rowCount * ROW_HEIGHT - GAP : 0 }}
       >
@@ -205,6 +247,8 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
                 delay={introDone ? 0 : Math.min(index, STAGGER_MAX_CARDS) * STAGGER_STEP_S}
                 animateIn={!introDone || animateExit}
                 onOpen={openDetail}
+                onCompare={startCompare}
+                picked={pending?.id === p.id}
               />
             );
           })}
@@ -228,6 +272,8 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
           onClosed={closeDetail}
         />
       )}
+      <AnimatePresence>{pending && !selected && !comparison && <CompareTray key="tray" first={pending} onCancel={() => setPending(null)} />}</AnimatePresence>
+      <AnimatePresence>{comparison && <CompareView key={`${comparison.a.id}-${comparison.b.id}`} a={comparison.a} b={comparison.b} onClose={closeComparison} />}</AnimatePresence>
     </MotionConfig>
   );
 }

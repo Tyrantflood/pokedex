@@ -673,3 +673,96 @@ html[data-night="1"] .night-veil {
     transition: none;
   }
 }
+
+/* ---- Comparison mode ---- */
+
+/* Compare button on each card: hidden until hover/focus on devices with a mouse, always shown on
+   touch screens, and shown on every card while a comparison is waiting for its second pick. */
+.compare-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(10, 14, 19, 0.78);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.compare-btn:hover {
+  background: rgba(45, 212, 191, 0.5);
+}
+.holo-card:hover .compare-btn,
+.compare-btn:focus-visible,
+.compare-btn[aria-pressed="true"],
+[data-comparing="true"] .compare-btn {
+  opacity: 1;
+}
+.compare-btn:focus-visible {
+  outline: 2px solid #5eead4;
+  outline-offset: 2px;
+}
+.compare-btn[aria-pressed="true"] {
+  background: #2dd4bf;
+  color: #04201c;
+}
+@media (hover: none) {
+  .compare-btn {
+    opacity: 1;
+    width: 34px;
+    height: 34px;
+    font-size: 17px;
+  }
+}
+
+/* Dragging a card onto another. */
+body.is-card-dragging,
+body.is-card-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+.holo-card[data-drag-source="true"] .holo-inner {
+  opacity: 0.4;
+}
+.holo-card[data-drop="true"] .holo-inner {
+  transform: scale(1.06);
+  transition: transform 0.15s ease;
+}
+.holo-card[data-drop="true"] .holo-face {
+  box-shadow:
+    0 0 0 3px #5eead4,
+    0 0 30px 6px rgba(45, 212, 191, 0.55);
+}
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px 5px 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(94, 234, 212, 0.65);
+  background: rgba(10, 14, 19, 0.94);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.5),
+    0 0 20px rgba(45, 212, 191, 0.35);
+  color: #fff;
+  font: 600 13px system-ui, sans-serif;
+  white-space: nowrap;
+  pointer-events: none;
+  will-change: transform;
+}
+.drag-ghost img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}

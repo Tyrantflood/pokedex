@@ -35,9 +35,13 @@ interface Props {
    */
   animateIn: boolean;
   onOpen: (p: PokemonSummary, origin: CardRects) => void;
+  /** Starts (or finishes) a side-by-side comparison from this card. */
+  onCompare: (p: PokemonSummary) => void;
+  /** This card is the first half of a comparison that is waiting for a second pick. */
+  picked: boolean;
 }
 
-function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, onOpen }: Props) {
+function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, onOpen, onCompare, picked }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const frame = useRef(0);
@@ -122,7 +126,7 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, on
           <div className="flex items-start justify-between p-3">
             <span className="font-mono text-xs text-zinc-300/80">#{String(p.number).padStart(4, "0")}</span>
             {p.tag && (
-              <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/90">
+              <span className="mr-7 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/90">
                 {p.tag}
               </span>
             )}
@@ -161,6 +165,16 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, on
           onFocus={() => preloadImage(p.artwork)}
           className="absolute inset-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
         />
+        {/* Comparison without dragging: always shown on touch screens, on hover/focus elsewhere. */}
+        <button
+          type="button"
+          className="compare-btn"
+          aria-label={picked ? `Stop comparing ${p.name.replace(/-/g, " ")}` : `Compare ${p.name.replace(/-/g, " ")} with another Pokémon`}
+          aria-pressed={picked}
+          onClick={() => onCompare(p)}
+        >
+          ⇄
+        </button>
       </div>
     </motion.div>
   );
