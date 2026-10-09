@@ -1,5 +1,6 @@
 import { cacheLife } from "next/cache";
-import { API, getJson } from "./pokeapi";
+import { getJson } from "./pokeapi";
+import { getSpecies } from "./species";
 
 export interface EvolutionNode {
   species: string;
@@ -62,7 +63,7 @@ export async function getEvolutionChain(species: string): Promise<EvolutionNode>
   "use cache";
   cacheLife("max");
 
-  const sp = await getJson<{ evolution_chain: { url: string } }>(`${API}/pokemon-species/${species}`);
-  const chain = await getJson<{ chain: RawLink }>(sp.evolution_chain.url);
+  const { chainUrl } = await getSpecies(species);
+  const chain = await getJson<{ chain: RawLink }>(chainUrl);
   return toNode(chain.chain);
 }

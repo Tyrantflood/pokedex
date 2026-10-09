@@ -9,8 +9,8 @@ import {
   useReducedMotion,
   useTransform,
 } from "framer-motion";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { loadEvolutionChain, type EvolutionResult } from "@/app/actions";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { loadEvolutionChain, loadFlavorText, type EvolutionResult } from "@/app/actions";
 import type { EvolutionNode } from "@/lib/evolution";
 import { stopCry } from "@/lib/cry-audio";
 import { preloadImage } from "@/lib/preload-image";
@@ -18,6 +18,8 @@ import type { PokemonSummary } from "@/lib/summary";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import { measureCard, type CardRects } from "./card-rects";
 import { CryPanel } from "./cry-panel";
+import { FlavorText } from "./flavor-text";
+import { TypeFx, fxKindOf, useFrameGuard } from "./type-fx";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 const OPEN_S = 0.6;
@@ -70,6 +72,27 @@ function fetchEvolution(species: string): Promise<EvolutionResult> {
   return request;
 }
 
+const flavorRequests = new Map<string, Promise<string | null>>();
+function fetchFlavor(species: string): Promise<string | null> {
+  let request = flavorRequests.get(species);
+  if (!request) {
+    request = loadFlavorText(species)
+      .catch(() => ({ ok: false as const }))
+      .then((result) => {
+        if (!result.ok) {
+          flavorRequests.delete(species);
+          return null;
+        }
+        return result.text;
+      });
+    flavorRequests.set(species, request);
+  }
+  return request;
+}
+
+/** Slightly different flicker timing per element, so they don't all blink in unison. */
+const flick = (i: number): CSSProperties => ({ ["--fd" as string]: `${5.6 + ((i * 1.3) % 3)}s`, ["--fdl" as string]: `${-(i * 1.7)}s` });
+
 /**
  * Shared clock for the scan and the readouts, so they always start together.
  * Delays are measured from `t0` (when the view opened, or when a stage was clicked) and
@@ -112,6 +135,30 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   const [t0, setT0] = useState(() => performance.now());
   const [readyId, setReadyId] = useState<number | null>(null);
   const timeline: Timeline = { t0, go: readyId === current.id, reduce: reduceMotion };
+
+  // Pokédex entry for whichever Pokémon is showing. undefined = still loading.
+  const [flavors, setFlavors] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    let live = true;
+    fetchFlavor(current.species).then((text) => {
+      if (live) setFlavors((prev) => ({ ...prev, [current.species]: text }));
+    });
+    return () => {
+      live = false;
+    };
+  }, [current.species]);
+  const flavor = flavors[current.species];
+
+  // Type-themed background effects. They start once the open animation has finished (so the
+  // flight stays smooth) and switch themselves off if the device can't keep up.
+  const fxKind = fxKindOf(current.types[0]);
+  const [fxOn, setFxOn] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setFxOn(true), reduceMotion ? 0 : OPEN_S * 1000 + 150);
+    return () => clearTimeout(timer);
+  }, [reduceMotion]);
+  const dropFx = useCallback(() => setFxOn(false), []);
+  useFrameGuard(fxOn && !reduceMotion, dropFx);
 
   // The scan and the readouts wait until the artwork is decoded (usually already is, thanks
   // to the hover preload; otherwise this holds both back instead of letting numbers run ahead).
@@ -207,6 +254,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
     const animations: { finished: Promise<unknown> }[] = [];
 
     animations.push(animate("[data-d=content], [data-d=chrome]", { opacity: 0, y: 8 }, { duration: 0.18 }));
+    animations.push(animate("[data-d=fx]", { opacity: 0 }, { duration: 0.2 }));
 
     if (rects && slot && !reduceMotion) {
       const { card, sprite } = rects;
@@ -312,7 +360,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   const total = Object.values(current.stats).reduce((sum, v) => sum + v, 0);
 
   return (
-    <div ref={scope} role="dialog" aria-modal="true" aria-label={name} className="fixed inset-0 z-40">
+    <div ref={scope} role="dialog" aria-modal="true" aria-label={name} data-type={current.types[0]} className="fixed inset-0 z-40">
       {/* The card's own look, grown to fill the screen. */}
       <div
         data-d="panel"
@@ -341,6 +389,24 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
             exit={{ opacity: 0.99, transition: { duration: 0.5 } }}
             transition={{ duration: 0.5 }}
           />
+        </AnimatePresence>
+      </div>
+
+      {/* Type effects: background only, under the content. Crossfades when the type changes. */}
+      <div data-d="fx" className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <AnimatePresence initial>
+          {fxOn && (
+            <motion.div
+              key={fxKind}
+              className="absolute inset-0"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6 }}
+            >
+              <TypeFx kind={fxKind} reduce={reduceMotion} />
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
 
@@ -402,7 +468,9 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                 transition={{ duration: SWITCH_S }}
               >
                 <header>
-                  <p className="font-mono text-sm text-white/70">#{String(current.number).padStart(4, "0")}</p>
+                  <p className="fx-flick font-mono text-sm text-white/70" style={flick(0)}>
+                    #{String(current.number).padStart(4, "0")}
+                  </p>
                   <h2 className="mt-1 text-4xl font-bold capitalize tracking-tight text-white md:text-5xl">{name}</h2>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {current.types.map((t) => (
@@ -422,8 +490,22 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                   </div>
                 </header>
 
+                {/* Only this text is ever misspelled by the Ghost theme; the name and stats never are. */}
+                {flavor !== null && (
+                  <section aria-label="Pokédex entry" className="min-h-[3.75rem]">
+                    {flavor === undefined ? (
+                      <div role="status" aria-label="Loading Pokédex entry" className="space-y-2 pt-1">
+                        <div className="h-3 w-full animate-pulse rounded bg-white/10" />
+                        <div className="h-3 w-4/5 animate-pulse rounded bg-white/10" />
+                      </div>
+                    ) : (
+                      <FlavorText text={flavor} ghost={fxKind === "ghost" && !reduceMotion} />
+                    )}
+                  </section>
+                )}
+
                 <section aria-label="Base stats">
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Base stats</h3>
+                  <h3 className="fx-flick mb-2 text-xs font-semibold uppercase tracking-widest text-white/70" style={flick(1)}>Base stats</h3>
                   <ul className="space-y-1.5">
                     {STAT_ROWS.map(({ key, label }, i) => (
                       <StatRow
@@ -446,7 +528,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
 
                 <div className="grid gap-6 sm:grid-cols-2">
                   <section aria-label="Abilities">
-                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Abilities</h3>
+                    <h3 className="fx-flick mb-2 text-xs font-semibold uppercase tracking-widest text-white/70" style={flick(2)}>Abilities</h3>
                     <ul className="flex flex-wrap gap-2">
                       {current.abilities.length === 0 && <li className="text-sm text-white/60">None listed</li>}
                       {current.abilities.map((a) => (
@@ -461,7 +543,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                     </ul>
                   </section>
                   <section aria-label="Size">
-                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Size</h3>
+                    <h3 className="fx-flick mb-2 text-xs font-semibold uppercase tracking-widest text-white/70" style={flick(3)}>Size</h3>
                     <dl className="grid grid-cols-2 gap-2 text-sm">
                       <div className="rounded-lg border border-white/20 bg-black/25 px-3 py-1.5">
                         <dt className="text-[10px] uppercase tracking-wider text-white/60">Height</dt>
@@ -483,7 +565,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
 
             {/* Outside the swapping block, so it (and keyboard focus on a stage) survives a switch. */}
             <section aria-label="Evolution chain">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Evolution</h3>
+              <h3 className="fx-flick mb-2 text-xs font-semibold uppercase tracking-widest text-white/70" style={flick(4)}>Evolution</h3>
               <EvolutionSection
                 state={evolution}
                 current={current}

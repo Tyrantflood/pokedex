@@ -214,3 +214,439 @@ html[data-boot="play"] [data-boot-content] {
 html {
   scrollbar-gutter: stable;
 }
+
+/* ---- Type themes (detail view background) ----
+   Everything below animates transform/opacity only, so it stays on the compositor with ~0
+   raster cost. SVG displacement/turbulence filters were profiled for the Fire and Water
+   effects and dropped: ~1,300-3,300 ms/s of raster time on a phone-sized viewport. */
+.fx-root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Where the sprite sits: top-centre on phones, left column on wide screens. */
+.fx-at-sprite {
+  --cx: 50%;
+  --cy: 30%;
+}
+@media (min-width: 768px) {
+  .fx-at-sprite {
+    --cx: 28%;
+    --cy: 48%;
+  }
+}
+
+/* Generic particles: rise (bubbles/embers/pollen), fall (snow/grit), drift (dust),
+   twinkle (stars/sparkles), wander (fireflies). */
+.fx-p {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform, opacity;
+}
+.fx-rise {
+  bottom: -4%;
+  animation: fx-rise var(--d) linear var(--dl) infinite;
+}
+.fx-fall {
+  top: -4%;
+  animation: fx-fall var(--d) linear var(--dl) infinite;
+}
+.fx-drift {
+  left: -6%;
+  animation: fx-drift var(--d) linear var(--dl) infinite;
+}
+.fx-twinkle {
+  animation: fx-twinkle var(--d) ease-in-out var(--dl) infinite;
+}
+.fx-wander {
+  animation: fx-wander var(--d) ease-in-out var(--dl) infinite;
+}
+.fx-leaf {
+  border-radius: 0 60% 0 60%;
+}
+.fx-grit {
+  border-radius: 1px;
+}
+.fx-star {
+  border-radius: 0;
+  clip-path: polygon(50% 0%, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0% 50%, 38% 38%);
+}
+@keyframes fx-rise {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  8% {
+    opacity: var(--o, 0.9);
+  }
+  100% {
+    transform: translate3d(var(--dx), -108vh, 0);
+    opacity: 0;
+  }
+}
+@keyframes fx-fall {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  8% {
+    opacity: var(--o, 0.9);
+  }
+  100% {
+    transform: translate3d(var(--dx), 108vh, 0);
+    opacity: 0;
+  }
+}
+@keyframes fx-drift {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  10%,
+  90% {
+    opacity: var(--o, 0.7);
+  }
+  100% {
+    transform: translate3d(112vw, var(--dy, -6vh), 0);
+    opacity: 0;
+  }
+}
+@keyframes fx-twinkle {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  50% {
+    opacity: var(--o, 1);
+    transform: scale(1);
+  }
+}
+@keyframes fx-wander {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0.1;
+  }
+  25% {
+    transform: translate3d(var(--dx), var(--dy), 0);
+    opacity: 1;
+  }
+  50% {
+    transform: translate3d(calc(var(--dx) * -0.6), calc(var(--dy) * 1.4), 0);
+    opacity: 0.2;
+  }
+  75% {
+    transform: translate3d(calc(var(--dx) * 0.5), calc(var(--dy) * -0.8), 0);
+    opacity: 1;
+  }
+}
+
+/* Expanding rings: water ripples, fighting shockwaves, psychic pulses. */
+.fx-ring {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: var(--s);
+  height: var(--s);
+  margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2);
+  border-radius: 50%;
+  border: var(--bw, 1.5px) solid var(--c);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: fx-ring var(--d) var(--ease, ease-out) var(--dl) infinite;
+}
+@keyframes fx-ring {
+  0% {
+    transform: scale(0.08);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+/* Soft glow that slowly breathes (normal, psychic) and a breathing vignette (dark). */
+.fx-breathe {
+  position: absolute;
+  left: var(--cx);
+  top: var(--cy);
+  width: var(--s, 70vmin);
+  height: var(--s, 70vmin);
+  margin: calc(var(--s, 70vmin) / -2) 0 0 calc(var(--s, 70vmin) / -2);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--c), transparent);
+  will-change: transform, opacity;
+  animation: fx-breathe var(--d, 7s) ease-in-out infinite alternate;
+}
+@keyframes fx-breathe {
+  from {
+    transform: scale(0.88);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(1.12);
+    opacity: 0.9;
+  }
+}
+.fx-vignette {
+  position: absolute;
+  inset: -12%;
+  background: radial-gradient(closest-side at 50% 50%, transparent 45%, rgba(0, 0, 0, 0.62));
+  will-change: transform, opacity;
+  animation: fx-vig 9s ease-in-out infinite alternate;
+}
+@keyframes fx-vig {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+/* Fire: warm grade (static) plus rising heat plumes and embers. */
+.fx-fire-grade {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(130% 70% at 50% 108%, rgba(255, 110, 30, 0.5), rgba(255, 60, 20, 0.2) 42%, transparent 72%),
+    linear-gradient(to bottom, rgba(45, 6, 2, 0.32), transparent 55%),
+    rgba(255, 150, 70, 0.07);
+}
+.fx-plume {
+  position: absolute;
+  bottom: -10%;
+  width: 16vw;
+  height: 85vh;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 100%, rgba(255, 170, 80, 0.28), rgba(255, 120, 40, 0.08) 55%, transparent 72%);
+  will-change: transform, opacity;
+  animation: fx-plume var(--d) ease-in-out var(--dl) infinite;
+}
+@keyframes fx-plume {
+  0% {
+    transform: translate3d(0, 8vh, 0) scaleX(0.9);
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.9;
+  }
+  50% {
+    transform: translate3d(var(--dx), -6vh, 0) scaleX(1.25);
+  }
+  100% {
+    transform: translate3d(calc(var(--dx) * -1), -24vh, 0) scaleX(0.95);
+    opacity: 0;
+  }
+}
+
+/* Water: deep-water grade (static) plus two drifting layers of a pre-rendered caustic tile.
+   Each layer is one tile larger than the screen and slides exactly one tile, so it loops
+   seamlessly. */
+.fx-water-grade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(10, 60, 120, 0.18), rgba(5, 30, 70, 0.3));
+}
+.fx-caustic {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background-image: url("/fx/caustic.png");
+  will-change: transform;
+}
+.fx-caustic-a {
+  width: calc(100% + 192px);
+  height: calc(100% + 192px);
+  background-size: 192px 192px;
+  opacity: 0.2;
+  animation: fx-caustic-a 18s linear infinite;
+}
+.fx-caustic-b {
+  width: calc(100% + 288px);
+  height: calc(100% + 288px);
+  background-size: 288px 288px;
+  opacity: 0.1;
+  animation: fx-caustic-b 27s linear infinite;
+}
+@keyframes fx-caustic-a {
+  to {
+    transform: translate3d(-192px, -192px, 0);
+  }
+}
+@keyframes fx-caustic-b {
+  from {
+    transform: translate3d(-288px, 0, 0);
+  }
+  to {
+    transform: translate3d(0, -288px, 0);
+  }
+}
+
+/* Ghost: drifting fog. */
+.fx-fog {
+  position: absolute;
+  width: 120vw;
+  height: 90vh;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--c), transparent);
+  will-change: transform;
+  animation: fx-fog var(--d) ease-in-out infinite alternate;
+}
+@keyframes fx-fog {
+  from {
+    transform: translate3d(-12vw, 0, 0);
+  }
+  to {
+    transform: translate3d(12vw, -8vh, 0);
+  }
+}
+
+/* Electric: bolts that flash abruptly and rarely. */
+.fx-bolt {
+  position: absolute;
+  opacity: 0;
+  will-change: opacity;
+  animation: fx-bolt var(--d) steps(1, end) var(--dl) infinite;
+}
+@keyframes fx-bolt {
+  0%,
+  89%,
+  100% {
+    opacity: 0;
+  }
+  90% {
+    opacity: 0.9;
+  }
+  91% {
+    opacity: 0.15;
+  }
+  92.5% {
+    opacity: 1;
+  }
+  94% {
+    opacity: 0;
+  }
+}
+.fx-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(70% 60% at 50% 30%, rgba(255, 240, 150, 0.14), transparent 70%);
+  opacity: 0;
+  animation: fx-bolt var(--d) steps(1, end) var(--dl) infinite;
+}
+
+/* Flying: wind streaks. Steel: a glint sweeping across. Dragon: a slow aurora. */
+.fx-streak {
+  position: absolute;
+  left: -40vw;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  will-change: transform, opacity;
+  animation: fx-streak var(--d) linear var(--dl) infinite;
+}
+@keyframes fx-streak {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(180vw, 0, 0);
+    opacity: 0;
+  }
+}
+.fx-glint {
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  left: 0;
+  width: 55vw;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.13) 50%, transparent 65%);
+  will-change: transform, opacity;
+  animation: fx-glint 8s ease-in-out infinite;
+}
+@keyframes fx-glint {
+  0% {
+    transform: translate3d(-70vw, 0, 0);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  45% {
+    transform: translate3d(120vw, 0, 0);
+    opacity: 1;
+  }
+  50%,
+  100% {
+    transform: translate3d(120vw, 0, 0);
+    opacity: 0;
+  }
+}
+.fx-conic {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 160vmax;
+  height: 160vmax;
+  margin: -80vmax 0 0 -80vmax;
+  background: conic-gradient(
+    from 0deg,
+    transparent,
+    rgba(120, 80, 255, 0.25),
+    transparent 30%,
+    rgba(80, 200, 255, 0.2),
+    transparent 60%,
+    rgba(255, 80, 200, 0.18),
+    transparent
+  );
+  will-change: transform;
+  animation: fx-spin 60s linear infinite;
+}
+@keyframes fx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Ghost: secondary text flickers (never the name or stats, which keep a steady read). */
+@keyframes ghost-flicker {
+  0%,
+  88%,
+  100% {
+    opacity: 1;
+  }
+  89% {
+    opacity: 0.25;
+  }
+  90% {
+    opacity: 1;
+  }
+  93% {
+    opacity: 0.5;
+  }
+  94.5% {
+    opacity: 1;
+  }
+}
+[data-type="ghost"] .fx-flick {
+  animation: ghost-flicker var(--fd, 6s) steps(1, end) var(--fdl, 0s) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-root *,
+  [data-type="ghost"] .fx-flick {
+    animation: none !important;
+  }
+}
