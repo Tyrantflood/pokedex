@@ -24,6 +24,7 @@ import { CryPanel } from "./cry-panel";
 import { artSet, preloadDetailArt, readArtMode, saveArtMode, type ArtImage, type ArtMode, type ArtSet, type StillImage } from "./art";
 import { EVOLVE_REVEAL_S, EvolveFx, Sparkles } from "./evolve-fx";
 import { FlavorText } from "./flavor-text";
+import { WhereToFind } from "./where-to-find";
 import { TypeFx, fxKindOf, useFrameGuard } from "./type-fx";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -765,6 +766,9 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                 onRetry={retryEvolution}
               />
             </section>
+
+            {/* Loaded when the view opens (and again for each stage you switch to). */}
+            <WhereToFind key={current.id} pokemon={current} />
           </div>
         </div>
       </div>

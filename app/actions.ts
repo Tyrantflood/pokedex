@@ -1,5 +1,7 @@
 "use server";
 
+import type { GameEncounters } from "@/lib/encounter-data";
+import { getEncounters } from "@/lib/encounters";
 import { getEvolutionChain, type EvolutionNode } from "@/lib/evolution";
 import { getSpecies } from "@/lib/species";
 
@@ -25,5 +27,17 @@ export async function loadFlavorText(species: string): Promise<FlavorResult> {
     return { ok: true, text: (await getSpecies(species)).flavor };
   } catch {
     return { ok: false };
+  }
+}
+
+export type EncountersResult = { ok: true; games: GameEncounters[] } | { ok: false; error: string };
+
+export async function loadEncounters(pokemonId: number): Promise<EncountersResult> {
+  // Server actions are public endpoints: only a plain PokéAPI id goes into the API path.
+  if (!Number.isInteger(pokemonId) || pokemonId < 1 || pokemonId > 100_000) return { ok: false, error: "Invalid Pokémon" };
+  try {
+    return { ok: true, games: await getEncounters(pokemonId) };
+  } catch {
+    return { ok: false, error: "Couldn't load encounter data." };
   }
 }

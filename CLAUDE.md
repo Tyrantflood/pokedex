@@ -150,6 +150,17 @@ The Vercel layout is assumed from the Build Output API, not observed.
     Per-frame canvas drawing was therefore not used (it would need WebCodecs `ImageDecoder`).
   - Cost (phone viewport, 4x CPU): scan 66 frames/s, 8 ms/s raster; idle with a GIF playing 60 frames/s, 2 ms/s; evolution 61 frames/s, 3 ms/s.
 
+### Where to find (`where-to-find.tsx`, `lib/encounter-*.ts`, `lib/games.ts`)
+- Loaded on demand per Pokémon (server action `loadEncounters(id)`, cached for days; one request per Pokémon per page load, failures not kept so Retry works).
+  PokéAPI `/pokemon/{id}/encounters` is per *form id*, so Megas and other forms honestly have none.
+- `buildGameEncounters` (pure, unit-tested): slots in one area with the same method and conditions are **summed** (capped at 100); areas that read as the same
+  location (`kanto-route-1-area` and `route-1-area`) are merged by **best chance and widest levels**; locations are ranked by best chance. Games are in
+  release order from the static list in `lib/games.ts` (add new versions there; unknown versions still show, last).
+- Honesty rules: a game with no data is worded "No wild encounter data", never "not found". Those lines only cover main-series games from the Pokémon's own
+  generation onwards, consecutive ones collapsed into one line; spin-offs, DLC and regional editions only appear when they have data. The Japanese Red/Green/Blue
+  editions are hidden when the international games have data (they repeat it). A note always says starters, gifts, trades and newer games are often missing.
+- Top 3 locations per game and top 3 methods per location, then "Show N more"; the first 4 rows, then "Show N more game entries".
+
 ### Other settled choices
 - **Night mode:** a static tinted `.night-veil` layer faded by opacity (midnight to 6:00 local). A CSS `filter`
   on the page would break `position:fixed` overlays and cost frames. `data-night` is set pre-paint by an inline
