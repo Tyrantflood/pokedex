@@ -114,6 +114,14 @@ The Vercel layout is assumed from the Build Output API, not observed.
   dragging on touch is scrolling), plus a Compare button on every card. Cards are found by `data-card-id`
   delegation, nothing per card. A drop must not also fire the card's click (`suppressClick`).
 
+### Shiny toggle and evolution sequence (`detail-view.tsx`, `evolve-fx.tsx`)
+- Shiny: sparkle burst, then the shiny image (a second layer inside the scan-clipped wrapper) crossfades in ~0.22 s later.
+  It stays on along the chain when the next form has shiny art, and the image is preloaded once the view is ready.
+- Evolution: only for a **forward** click (`lib/evolution-path.ts` `evolvesInto`: any later stage, Charmander to Charizard counts).
+  Earlier stages and siblings (Eevee branches) use the quick switch, as does reduced motion. The white silhouette is a *static*
+  `brightness(0) invert(1)` image whose opacity pulses (7 pulses, each shorter), never an animated filter. The swap happens under
+  the flash; the scan then starts `EVOLVE_REVEAL_S` after the swap. Measured on a phone viewport at 4x CPU: about 62 fps, about 3 ms/s raster.
+
 ### Other settled choices
 - **Night mode:** a static tinted `.night-veil` layer faded by opacity (midnight to 6:00 local). A CSS `filter`
   on the page would break `position:fixed` overlays and cost frames. `data-night` is set pre-paint by an inline

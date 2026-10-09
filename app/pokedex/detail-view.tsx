@@ -12,12 +12,14 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { loadEvolutionChain, loadFlavorText, type EvolutionResult } from "@/app/actions";
 import type { EvolutionNode } from "@/lib/evolution";
+import { evolvesInto } from "@/lib/evolution-path";
 import { stopCry } from "@/lib/cry-audio";
 import { preloadImage } from "@/lib/preload-image";
 import type { PokemonSummary } from "@/lib/summary";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import { measureCard, type CardRects } from "./card-rects";
 import { CryPanel } from "./cry-panel";
+import { EVOLVE_REVEAL_S, EvolveFx, Sparkles, type ArtImage } from "./evolve-fx";
 import { FlavorText } from "./flavor-text";
 import { TypeFx, fxKindOf, useFrameGuard } from "./type-fx";
 
@@ -35,6 +37,10 @@ const SCAN_EASE = [0.45, 0, 0.25, 1] as const;
 const OPEN_SCAN_DELAY_S = OPEN_S + 0.05;
 /** ...or just after the sprite swaps when moving to another Pokémon. */
 const SWITCH_SCAN_DELAY_S = 0.2;
+/** After the evolution flash the new silhouette is shown first, then the scan. */
+const EVOLVE_SCAN_DELAY_S = EVOLVE_REVEAL_S;
+/** The shiny crossfade starts this long after the sparkles, so it lands in the glow. */
+const SHINY_FADE_DELAY_S = 0.22;
 /** Exit and enter time when moving between Pokémon (each half of a quick swap). */
 const SWITCH_S = 0.18;
 const READOUT_EASE = [0.16, 1, 0.3, 1] as const;
@@ -52,6 +58,17 @@ const STAT_ROWS = [
 
 const pretty = (s: string) => s.replace(/-/g, " ");
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const decodeImage = (src: string) => {
+  const img = new Image();
+  img.src = src;
+  return img.decode().catch(() => {});
+};
+
+/** What the sprite slot draws for a Pokémon: official artwork (or its pixel sprite), shiny if asked and available. */
+const artOf = (p: PokemonSummary, shiny: boolean): ArtImage => ({
+  src: shiny && p.shinyArtwork ? p.shinyArtwork : (p.artwork ?? p.sprite),
+  pixelated: !p.artwork && p.pixel,
+});
 
 const colorOf = (p: PokemonSummary) => TYPE_COLORS[p.types[0]] ?? TYPE_COLORS.unknown;
 const color2Of = (p: PokemonSummary) => TYPE_COLORS[p.types[1] ?? p.types[0]] ?? colorOf(p);
@@ -130,8 +147,14 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
 
   // `current` is what's shown; `original` stays the card we return to.
   const [current, setCurrent] = useState(original);
-  const [switched, setSwitched] = useState(false);
-  const scanDelay = switched ? SWITCH_SCAN_DELAY_S : OPEN_SCAN_DELAY_S;
+  const [switchKind, setSwitchKind] = useState<"open" | "quick" | "evolve">("open");
+  const scanDelay = switchKind === "evolve" ? EVOLVE_SCAN_DELAY_S : switchKind === "quick" ? SWITCH_SCAN_DELAY_S : OPEN_SCAN_DELAY_S;
+  // Shiny stays on while moving along the chain (when the next form has a shiny version).
+  const [shiny, setShiny] = useState(false);
+  const [burst, setBurst] = useState(0);
+  const showShiny = shiny && current.shinyArtwork !== null;
+  // Set while the evolution sequence plays; stage clicks are ignored until it ends.
+  const [evo, setEvo] = useState<{ from: ArtImage; to: ArtImage; target: PokemonSummary } | null>(null);
   const [t0, setT0] = useState(() => performance.now());
   const [readyId, setReadyId] = useState<number | null>(null);
   const timeline: Timeline = { t0, go: readyId === current.id, reduce: reduceMotion };
@@ -167,12 +190,16 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
     const img = new Image();
     img.src = current.artwork ?? current.sprite;
     Promise.race([img.decode().catch(() => {}), sleep(2500)]).then(() => {
-      if (alive) setReadyId(current.id);
+      if (alive) {
+        setReadyId(current.id);
+        // Warm the shiny image too, so the toggle can start its sparkles and crossfade at once.
+        preloadImage(current.shinyArtwork);
+      }
     });
     return () => {
       alive = false;
     };
-  }, [current.id, current.artwork, current.sprite]);
+  }, [current.id, current.artwork, current.sprite, current.shinyArtwork]);
 
   const color = colorOf(current);
   const name = pretty(current.name);
@@ -348,13 +375,31 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
     setAttempt((n) => n + 1);
   };
 
-  const selectStage = (target: PokemonSummary) => {
-    if (closing.current || target.id === current.id) return;
-    preloadImage(target.artwork);
-    stopCry();
-    setSwitched(true);
+  const commitSwitch = (target: PokemonSummary, kind: "quick" | "evolve") => {
+    setSwitchKind(kind);
     setT0(performance.now());
     setCurrent(target);
+  };
+
+  const selectStage = (target: PokemonSummary) => {
+    if (closing.current || evo || target.id === current.id) return;
+    preloadImage(target.artwork);
+    stopCry();
+    // Moving *forward* in the chain plays the evolution sequence; going back (or sideways) is the quick switch.
+    const forward = evolution !== "loading" && evolution.ok && evolvesInto(evolution.chain, current.species, target.species);
+    if (forward && !reduceMotion) {
+      const nextShiny = shiny && target.shinyArtwork !== null;
+      preloadImage(nextShiny ? target.shinyArtwork : target.artwork);
+      setEvo({ from: artOf(current, showShiny), to: artOf(target, nextShiny), target });
+      return;
+    }
+    commitSwitch(target, "quick");
+  };
+
+  const toggleShiny = () => {
+    if (evo) return;
+    setShiny(!shiny);
+    if (!reduceMotion) setBurst((n) => n + 1);
   };
 
   const total = Object.values(current.stats).reduce((sum, v) => sum + v, 0);
@@ -444,15 +489,38 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                     exit={{ opacity: 0, scale: 0.92 }}
                     transition={{ duration: SWITCH_S }}
                   >
-                    <ScanArt pokemon={current} color={color} startDelay={scanDelay} timeline={timeline} />
+                    <ScanArt pokemon={current} color={color} startDelay={scanDelay} timeline={timeline} shiny={showShiny} burst={burst} />
                   </motion.div>
                 </AnimatePresence>
+                {evo && (
+                  <EvolveFx
+                    from={evo.from}
+                    to={evo.to}
+                    color={color}
+                    onSwap={() => {
+                      if (!closing.current) commitSwitch(evo.target, "evolve");
+                    }}
+                    onDone={() => setEvo(null)}
+                  />
+                )}
               </div>
             </div>
           </div>
 
           {/* Fades in with the rest of the content (data-d="chrome"). Remounts per Pokémon. */}
-          <div data-d="chrome" style={{ opacity: 0 }}>
+          <div data-d="chrome" className="flex flex-col gap-4" style={{ opacity: 0 }}>
+            {current.shinyArtwork && (
+              <button
+                type="button"
+                aria-pressed={showShiny}
+                onClick={toggleShiny}
+                onPointerEnter={() => preloadImage(current.shinyArtwork)}
+                onFocus={() => preloadImage(current.shinyArtwork)}
+                className="mx-auto flex items-center gap-2 rounded-full border border-white/25 bg-black/30 px-4 py-1.5 text-sm font-semibold text-white hover:bg-black/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 aria-pressed:border-amber-200/70 aria-pressed:bg-amber-200/15 aria-pressed:text-amber-100"
+              >
+                <span aria-hidden>✦</span> Shiny
+              </button>
+            )}
             <CryPanel key={current.id} url={current.cry} color={color} name={name} reduceMotion={reduceMotion} />
           </div>
           </div>
@@ -603,17 +671,52 @@ function ScanArt({
   color,
   startDelay,
   timeline,
+  shiny,
+  burst,
 }: {
   pokemon: PokemonSummary;
   color: string;
   startDelay: number;
   timeline: Timeline;
+  shiny: boolean;
+  /** Counts shiny toggles; each change plays a sparkle burst. 0 = none yet. */
+  burst: number;
 }) {
   const { reduce, go } = timeline;
   const [scope, animate] = useAnimate<HTMLDivElement>();
   const src = p.artwork ?? p.sprite;
   const pixelated = !p.artwork && p.pixel;
   const imgClass = `absolute inset-0 h-full w-full object-contain ${pixelated ? "[image-rendering:pixelated]" : ""}`;
+
+  // The shiny image only exists once it has been wanted, and is crossfaded over the normal one.
+  // Its starting opacity is fixed at mount (a stable style prop) so React never fights the animation.
+  const [startedShiny] = useState(shiny);
+  const lastShiny = useRef(shiny);
+  const [armed, setArmed] = useState(shiny);
+  if (shiny && !armed) setArmed(true);
+  const shinySrc = p.shinyArtwork;
+  useEffect(() => {
+    if (lastShiny.current === shiny) return;
+    lastShiny.current = shiny;
+    const target = shiny ? 1 : 0;
+    if (reduce) {
+      animate("[data-s=shiny]", { opacity: target }, { duration: 0 });
+      return;
+    }
+    let alive = true;
+    let running: { stop: () => void } | undefined;
+    const began = performance.now();
+    const ready = shiny && shinySrc ? Promise.race([decodeImage(shinySrc), sleep(1200)]) : Promise.resolve();
+    ready.then(() => {
+      if (!alive) return;
+      const wait = Math.max(0, SHINY_FADE_DELAY_S - (performance.now() - began) / 1000);
+      running = animate("[data-s=shiny]", { opacity: target }, { duration: 0.5, delay: wait, ease: "easeInOut" });
+    });
+    return () => {
+      alive = false;
+      running?.stop();
+    };
+  }, [animate, scope, shiny, shinySrc, reduce]);
 
   const { t0 } = timeline;
   useEffect(() => {
@@ -642,15 +745,28 @@ function ScanArt({
           style={{ filter: `brightness(0) drop-shadow(0 0 10px ${color}aa)` }}
         />
       )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        data-s="full"
-        src={src}
-        alt={pretty(p.name)}
-        draggable={false}
-        className={`${imgClass} drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]`}
-        style={{ clipPath: reduce ? undefined : "inset(0 0 100% 0)" }}
-      />
+      {/* The scan clips this wrapper, so the shiny image is revealed by the scan too. */}
+      <div data-s="full" className="absolute inset-0" style={{ clipPath: reduce ? undefined : "inset(0 0 100% 0)" }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={pretty(p.name) + (shiny ? " (shiny)" : "")}
+          draggable={false}
+          className={`${imgClass} drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]`}
+        />
+        {armed && shinySrc && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            data-s="shiny"
+            src={shinySrc}
+            alt=""
+            draggable={false}
+            className={`${imgClass} drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]`}
+            style={{ opacity: startedShiny ? 1 : 0 }}
+          />
+        )}
+      </div>
+      {burst > 0 && !reduce && <Sparkles key={burst} />}
       {!reduce && (
         <div
           data-s="bar"
