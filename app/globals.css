@@ -24,3 +24,48 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ---- Boot intro ----
+   The inline script in layout.tsx sets <html data-boot="play"> before first paint
+   on a first visit, so returning visitors never see a flash of the overlay. */
+[data-boot-content] {
+  transition: opacity 0.8s ease;
+}
+
+.boot-overlay {
+  display: none;
+}
+
+html[data-boot="play"] .boot-overlay {
+  display: flex;
+  /* Failsafe: if JS never hydrates, get out of the way. */
+  animation: boot-failsafe-hide 0.4s 8s forwards;
+}
+
+html[data-boot="play"] [data-boot-content] {
+  opacity: 0;
+  animation: boot-failsafe-show 0.6s 8s forwards;
+}
+
+@keyframes boot-failsafe-hide {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@keyframes boot-failsafe-show {
+  to {
+    opacity: 1;
+  }
+}
+
+.boot-scanlines {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.3) 0,
+    rgba(0, 0, 0, 0.3) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}

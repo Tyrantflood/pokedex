@@ -1,15 +1,18 @@
 import { Suspense } from "react";
 import { getAllPokemon } from "@/lib/pokeapi";
 import { spriteUrl } from "@/lib/sprites";
+import { BootIntro } from "./boot-intro";
 
 export default function Home() {
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-8">
-      <h1 className="mb-6 text-3xl font-bold tracking-tight">Pokédex</h1>
-      <Suspense fallback={<GridSkeleton />}>
-        <PokemonGrid />
-      </Suspense>
-    </main>
+    <BootIntro>
+      <main className="mx-auto w-full max-w-6xl px-4 py-8">
+        <h1 className="mb-6 text-3xl font-bold tracking-tight">Pokédex</h1>
+        <Suspense fallback={<GridSkeleton />}>
+          <PokemonGrid />
+        </Suspense>
+      </main>
+    </BootIntro>
   );
 }
 
