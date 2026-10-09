@@ -11,6 +11,7 @@ import { Controls } from "./controls";
 import { DetailView } from "./detail-view";
 import { PokemonCard } from "./pokemon-card";
 import { useCardDrag } from "./use-card-drag";
+import { markDragCompared, useDragHint } from "./use-drag-hint";
 
 const GAP = 16;
 const MIN_CARD_WIDTH = 172;
@@ -142,7 +143,15 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
 
   const byId = useMemo(() => new Map(pokemon.map((p) => [p.id, p])), [pokemon]);
   const lookup = useCallback((id: number) => byId.get(id), [byId]);
-  useCardDrag({ listRef, lookup, onDrop: openComparison, topInset: () => controlsRef.current?.offsetHeight ?? 0 });
+  const dropCompare = useCallback(
+    (a: PokemonSummary, b: PokemonSummary) => {
+      markDragCompared();
+      openComparison(a, b);
+    },
+    [openComparison],
+  );
+  useDragHint(listRef);
+  useCardDrag({ listRef, lookup, onDrop: dropCompare, topInset: () => controlsRef.current?.offsetHeight ?? 0 });
 
   useEffect(() => {
     if (!pending) return;

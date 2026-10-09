@@ -766,3 +766,35 @@ body.is-card-dragging * {
   height: 34px;
   object-fit: contain;
 }
+
+/* One-off label that teaches drag-to-compare (mouse/pen only; see use-drag-hint.ts). */
+.drag-hint {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  pointer-events: none;
+  padding: 5px 11px;
+  border-radius: 6px;
+  border: 1px solid rgba(94, 234, 212, 0.55);
+  background: rgba(10, 14, 19, 0.94);
+  color: #99f6e4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.5),
+    0 0 14px rgba(45, 212, 191, 0.25);
+  opacity: 0;
+  transition: opacity 0.18s ease-out;
+}
+.drag-hint::before {
+  content: "\21C4";
+  margin-right: 7px;
+  color: #5eead4;
+}
+.drag-hint.is-shown {
+  opacity: 1;
+}
