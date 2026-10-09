@@ -160,6 +160,21 @@ The Vercel layout is assumed from the Build Output API, not observed.
   generation onwards, consecutive ones collapsed into one line; spin-offs, DLC and regional editions only appear when they have data. The Japanese Red/Green/Blue
   editions are hidden when the international games have data (they repeat it). A note always says starters, gifts, trades and newer games are often missing.
 - Top 3 locations per game and top 3 methods per location, then "Show N more"; the first 4 rows, then "Show N more game entries".
+- **Why these choices (Where to find):**
+  - *Normalised on the server*, not in the browser: raw encounter JSON is large (Zubat is 160 areas across 30+ games); the browser only gets the grouped, ranked result.
+  - *Release order is a static list* (`lib/games.ts`) because PokéAPI's `/version` has no release dates. The list covers every version the API had at the time
+    (checked against 7 Pokémon: none unknown) and each game carries a generation and a `main` flag, which is what decides who gets a "no data" line.
+  - *Sum slots, then max across areas*: PokéAPI lists one row per slot/level, and slots add up to the chance of meeting the Pokémon in that area, so they are
+    summed. Different areas of one location are alternatives, so they take the best chance. Different *conditions* (morning/night, swarm) stay separate entries, never summed.
+  - *Region prefix and "-area" are stripped* from location slugs (the game already tells you the region). Sub-areas with their own slug
+    ("route-2-south-towards-viridian-city") are deliberately **not** merged into the parent route: guessing which sub-areas belong together would invent data.
+  - *"No data" is worded as a data gap, never an absence*, and the note under the list says why: the API misses starters, gifts, trades, special encounters
+    and the newest games (Gen 9 Pokémon such as Gholdengo have none at all). Do not change the wording to "not found".
+  - *Known limits:* the chance is the slot chance inside that area (not an overall odds figure), it does not know which games a Pokémon is actually in, and
+    only wild/static/gift entries PokéAPI has are shown.
+  - *Verified with:* a pure-logic test (names, merge, cap, ordering, row planning, Japan-edition hiding) plus real data for 7 Pokémon, and browser runs for
+    loading (aria-busy skeleton), error plus Retry (request blocked, then allowed), empty (Mega, Gen 9), show-more, refetch when switching evolution stage,
+    Esc, and a 390 px viewport with no sideways scroll.
 
 ### Other settled choices
 - **Night mode:** a static tinted `.night-veil` layer faded by opacity (midnight to 6:00 local). A CSS `filter`
