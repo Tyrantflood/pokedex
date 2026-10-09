@@ -128,9 +128,10 @@ The Vercel layout is assumed from the Build Output API, not observed.
 - Animated = PokéAPI Showdown GIFs (`sprites.other.showdown`; all 2,566 listed URLs resolve), pixelated and scaled to the slot. 68 forms have none
   (Megas etc.): they get the static pixel sprite with a CSS idle bob (`.art-bob`, phase-aligned to the wall clock so layers stay in sync). A GIF that
   fails to decode is added to `broken` and falls back the same way. `DISK_VERSION` is 4 because the cached shape gained `animated`.
-- The choice is remembered in `sessionStorage` `pokedex:detail-mode`. Changing it replays only the scan, not the readouts (separate art clock).
+- Animated is the default; Artwork is the thing you switch to. The choice is remembered in `sessionStorage` `pokedex:detail-mode`. Changing it replays only the scan, not the readouts (separate art clock).
 - Silhouettes (scan and evolution) and reduced motion use the first frame of the GIF (canvas to blob URL, cached), so no filter ever runs on an
-  animated image and reduced motion truly pauses. Comparison mode always uses static artwork.
+  animated image. Reduced motion truly pauses. Comparison mode always uses static artwork.
+- The scan silhouette exists only until the reveal finishes: it is unmounted (not just faded) and the scan waits for it to exist. Once it stayed behind the moving GIF, because its first frame arrives asynchronously and the fade-out had already run on nothing. The shiny crossfade likewise hides the normal layer once fully shiny.
 
 ### Other settled choices
 - **Night mode:** a static tinted `.night-veil` layer faded by opacity (midnight to 6:00 local). A CSS `filter`

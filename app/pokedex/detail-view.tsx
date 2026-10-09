@@ -848,18 +848,25 @@ function ScanArt({
     if (lastShiny.current === shiny) return;
     lastShiny.current = shiny;
     const target = shiny ? 1 : 0;
+    // Only one of the two layers is ever visible once the fade is over (the other would just
+    // animate unseen behind it, and show at the edges where the two sprites differ).
     if (reduce) {
       animate("[data-s=shiny]", { opacity: target }, { duration: 0 });
+      animate("[data-s=base]", { opacity: 1 - target }, { duration: 0 });
       return;
     }
     let alive = true;
-    let running: { stop: () => void } | undefined;
+    let running: { stop: () => void; finished: Promise<unknown> } | undefined;
     const began = performance.now();
     const ready = shiny && shinySrc ? Promise.race([decodeImage(shinySrc), sleep(1200)]) : Promise.resolve();
     ready.then(() => {
       if (!alive) return;
+      if (!shiny) animate("[data-s=base]", { opacity: 1 }, { duration: 0 });
       const wait = Math.max(0, SHINY_FADE_DELAY_S - (performance.now() - began) / 1000);
       running = animate("[data-s=shiny]", { opacity: target }, { duration: 0.5, delay: wait, ease: "easeInOut" });
+      running.finished.then(() => {
+        if (alive && shiny) animate("[data-s=base]", { opacity: 0 }, { duration: 0 });
+      });
     });
     return () => {
       alive = false;
@@ -867,10 +874,16 @@ function ScanArt({
     };
   }, [animate, scope, shiny, shinySrc, reduce]);
 
+  // The silhouette exists only until the reveal has finished; after that nothing but the real image remains.
+  // (An animated sprite's silhouette needs its first frame extracted, so it can appear a moment after
+  // the image is ready: the scan waits for it, and the layer is removed rather than merely faded.)
+  const [revealDone, setRevealDone] = useState(false);
+  const silReady = silSrc !== null;
   const { t0 } = timeline;
   useEffect(() => {
     // Reduced motion: straight to the final, fully revealed state. Otherwise wait for the image.
-    if (reduce || !go) return;
+    if (reduce || !go || !silReady) return;
+    let alive = true;
     const delay = remaining({ t0, go, reduce }, startDelay);
     const running = [
       animate("[data-s=full]", { clipPath: ["inset(0 0 100% 0)", "inset(0 0 0% 0)"] }, { duration: SCAN_S, delay, ease: SCAN_EASE }),
@@ -878,13 +891,19 @@ function ScanArt({
       animate("[data-s=bar]", { opacity: [0, 1, 1, 0] }, { duration: SCAN_S, delay, ease: "linear", times: [0, 0.06, 0.94, 1] }),
       animate("[data-s=sil]", { opacity: 0 }, { duration: 0.25, delay: delay + SCAN_S }),
     ];
-    return () => running.forEach((a) => a.stop());
-  }, [animate, reduce, go, t0, startDelay]);
+    Promise.all(running.map((a) => a.finished)).then(() => {
+      if (alive) setRevealDone(true);
+    });
+    return () => {
+      alive = false;
+      running.forEach((a) => a.stop());
+    };
+  }, [animate, reduce, go, silReady, t0, startDelay]);
 
   const shadow = "drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]";
   return (
     <div ref={scope} className="absolute inset-0">
-      {!reduce && silSrc && (
+      {!reduce && silSrc && !revealDone && (
         <ArtLayer
           layer="sil"
           src={silSrc}
@@ -897,7 +916,16 @@ function ScanArt({
       {/* The scan clips this wrapper, so the shiny image is revealed by the scan too. */}
       <div data-s="full" className="absolute inset-0" style={{ clipPath: reduce ? undefined : "inset(0 0 100% 0)" }}>
         {baseShown && (
-          <ArtLayer layer="base" src={baseShown.src} pixelated={baseShown.pixelated} bob={baseShown.bob} reduce={reduce} className={shadow} alt={name + (shiny ? " (shiny)" : "")} />
+          <ArtLayer
+            layer="base"
+            src={baseShown.src}
+            pixelated={baseShown.pixelated}
+            bob={baseShown.bob}
+            reduce={reduce}
+            className={shadow}
+            style={{ opacity: startedShiny ? 0 : 1 }}
+            alt={name + (shiny ? " (shiny)" : "")}
+          />
         )}
         {armed && shinyShown && (
           <ArtLayer

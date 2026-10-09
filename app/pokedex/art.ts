@@ -59,12 +59,12 @@ export function artSet(p: PokemonSummary, mode: ArtMode, broken: ReadonlySet<str
 
 const MODE_KEY = "pokedex:detail-mode";
 
-/** The remembered choice for this browser session (artwork if none, or if storage is unavailable). */
+/** The remembered choice for this browser session: animated unless the user switched to artwork. */
 export function readArtMode(): ArtMode {
   try {
-    return sessionStorage.getItem(MODE_KEY) === "animated" ? "animated" : "artwork";
+    return sessionStorage.getItem(MODE_KEY) === "artwork" ? "artwork" : "animated";
   } catch {
-    return "artwork";
+    return "animated";
   }
 }
 
