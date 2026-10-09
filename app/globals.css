@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0e13;
+  --foreground: #e5e7eb;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -10,13 +11,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
@@ -68,4 +62,132 @@ html[data-boot="play"] [data-boot-content] {
     transparent 1px,
     transparent 3px
   );
+}
+
+/* ---- Pokémon cards ----
+   Perf: every card on screen is a plain 2D layer. The 3D context, will-change and the
+   blend-mode shine are only switched on for the one card under the cursor. */
+.holo-card {
+  perspective: 700px;
+}
+
+.holo-inner {
+  position: relative;
+  height: 100%;
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.holo-card[data-hover="true"] .holo-inner {
+  transform-style: preserve-3d;
+  will-change: transform;
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) scale(1.04);
+  transition: transform 0.08s linear;
+}
+
+.holo-face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--type) 55%, transparent);
+  background: radial-gradient(120% 75% at 50% 28%, color-mix(in srgb, var(--type) 42%, #0d1117) 0%, #0d1117 72%);
+}
+
+/* Outer type-coloured glow as a gradient halo: much cheaper to rasterise than a
+   blurred box-shadow on every card. */
+.holo-card::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--type) 38%, transparent) 55%, transparent 100%);
+}
+
+/* Holographic shine: a cursor-following highlight over a shifting rainbow foil. */
+.holo-shine {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: color-dodge;
+  background:
+    radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.55), transparent 42%),
+    linear-gradient(
+      115deg,
+      transparent 15%,
+      rgba(255, 0, 140, 0.35) 30%,
+      rgba(0, 240, 255, 0.35) 45%,
+      rgba(255, 235, 0, 0.35) 60%,
+      rgba(140, 90, 255, 0.35) 75%,
+      transparent 90%
+    );
+  background-size: 100% 100%, 220% 220%;
+  background-position: 0 0, var(--mx, 50%) var(--my, 50%);
+}
+
+.holo-card[data-hover="true"] .holo-shine {
+  display: block;
+  animation: shine-in 0.25s ease-out forwards;
+}
+
+@keyframes shine-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.6;
+  }
+}
+
+.holo-sprite {
+  position: absolute;
+  inset: 34px 10px 62px;
+  pointer-events: none;
+  transition: transform 0.3s ease-out;
+}
+
+/* Sprite floats above the card face while it tilts. */
+.holo-card[data-hover="true"] .holo-sprite {
+  transform: translateZ(34px);
+}
+
+/* Static ground shadow: cheaper than a drop-shadow filter on an animated image. */
+.holo-sprite::before {
+  content: "";
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  bottom: 2px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.5), transparent);
+}
+
+.sprite-bob {
+  position: relative;
+  animation: sprite-bob 3.2s ease-in-out infinite;
+}
+
+@keyframes sprite-bob {
+  0%,
+  100% {
+    transform: translateY(2px);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sprite-bob {
+    animation: none;
+  }
+  .holo-card[data-hover="true"] .holo-inner,
+  .holo-card[data-hover="true"] .holo-sprite {
+    transform: none;
+  }
+  .holo-shine {
+    display: none !important;
+  }
 }
