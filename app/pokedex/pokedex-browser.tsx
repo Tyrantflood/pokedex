@@ -105,6 +105,9 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
   }, []);
 
   const openDetail = useCallback((pokemon: PokemonSummary, origin: CardRects) => setSelected({ pokemon, origin }), []);
+  // Evolution stages are species; resolve each to its default form for the detail view.
+  const defaultForms = useMemo(() => new Map(pokemon.filter((p) => p.base).map((p) => [p.species, p])), [pokemon]);
+  const resolveSpecies = useCallback((species: string) => defaultForms.get(species), [defaultForms]);
   const closeDetail = useCallback(() => setSelected(null), []);
 
   const changeQuery = (q: string) => {
@@ -217,7 +220,13 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
         </div>
       )}
       {selected && (
-        <DetailView key={selected.pokemon.id} pokemon={selected.pokemon} origin={selected.origin} onClosed={closeDetail} />
+        <DetailView
+          key={selected.pokemon.id}
+          pokemon={selected.pokemon}
+          origin={selected.origin}
+          resolveSpecies={resolveSpecies}
+          onClosed={closeDetail}
+        />
       )}
     </MotionConfig>
   );

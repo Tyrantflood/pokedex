@@ -1,10 +1,18 @@
 "use client";
 
-import { motion, useAnimate, useReducedMotion } from "framer-motion";
+import {
+  AnimatePresence,
+  animate as tween,
+  motion,
+  useAnimate,
+  useMotionValue,
+  useReducedMotion,
+  useTransform,
+} from "framer-motion";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { loadEvolutionChain, type EvolutionResult } from "@/app/actions";
 import type { EvolutionNode } from "@/lib/evolution";
-import type { PokemonStats } from "@/lib/pokemon-types";
+import { preloadImage } from "@/lib/preload-image";
 import type { PokemonSummary } from "@/lib/summary";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import { measureCard, type CardRects } from "./card-rects";
@@ -13,19 +21,36 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 const OPEN_S = 0.6;
 const CLOSE_S = 0.5;
 const CONTENT_DELAY_S = 0.3;
-const MAX_BASE_STAT = 255;
 const CARD_RADIUS = 16;
+const MAX_BASE_STAT = 255;
 
-const STAT_ROWS: { key: keyof PokemonStats; label: string }[] = [
+// Scan reveal: a bar sweeps the sprite top to bottom while the readouts tick up.
+const SCAN_S = 1.5;
+const SCAN_EASE = [0.45, 0, 0.25, 1] as const;
+/** Scan begins just after the sprite lands from the card... */
+const OPEN_SCAN_DELAY_S = OPEN_S + 0.05;
+/** ...or just after the sprite swaps when moving to another Pokémon. */
+const SWITCH_SCAN_DELAY_S = 0.2;
+/** Exit and enter time when moving between Pokémon (each half of a quick swap). */
+const SWITCH_S = 0.18;
+const READOUT_EASE = [0.16, 1, 0.3, 1] as const;
+const STAT_TICK_S = 0.95;
+const STAT_STAGGER_S = 0.11;
+
+const STAT_ROWS = [
   { key: "hp", label: "HP" },
   { key: "attack", label: "Attack" },
   { key: "defense", label: "Defense" },
   { key: "specialAttack", label: "Sp. Atk" },
   { key: "specialDefense", label: "Sp. Def" },
   { key: "speed", label: "Speed" },
-];
+] as const;
 
 const pretty = (s: string) => s.replace(/-/g, " ");
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const colorOf = (p: PokemonSummary) => TYPE_COLORS[p.types[0]] ?? TYPE_COLORS.unknown;
+const color2Of = (p: PokemonSummary) => TYPE_COLORS[p.types[1] ?? p.types[0]] ?? colorOf(p);
 
 // One request per species per page load; failures aren't kept so Retry really retries.
 const evolutionRequests = new Map<string, Promise<EvolutionResult>>();
@@ -43,15 +68,32 @@ function fetchEvolution(species: string): Promise<EvolutionResult> {
   return request;
 }
 
+/**
+ * Shared clock for the scan and the readouts, so they always start together.
+ * Delays are measured from `t0` (when the view opened, or when a stage was clicked) and
+ * nothing starts until `go`, i.e. until the artwork can actually be drawn.
+ */
+interface Timeline {
+  t0: number;
+  go: boolean;
+  reduce: boolean;
+}
+
+/** Seconds still to wait before something scheduled `delay` seconds after t0 should start. */
+const remaining = (tl: Timeline, delay: number) => Math.max(0, delay - (performance.now() - tl.t0) / 1000);
+
 interface Props {
+  /** The Pokémon whose card was clicked. Closing always returns to this card. */
   pokemon: PokemonSummary;
-  /** Where the card was on screen when it was clicked; the view grows out of this. */
+  /** Where that card was on screen when clicked; the view grows out of this. */
   origin: CardRects;
+  /** Maps an evolution-chain species to the Pokémon to show for it. */
+  resolveSpecies: (species: string) => PokemonSummary | undefined;
   /** Called once the closing animation has finished. */
   onClosed: () => void;
 }
 
-export function DetailView({ pokemon: p, origin, onClosed }: Props) {
+export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed }: Props) {
   const [scope, animate] = useAnimate<HTMLDivElement>();
   const slotRef = useRef<HTMLDivElement>(null);
   const spriteRef = useRef<HTMLDivElement>(null);
@@ -59,11 +101,32 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
   const closing = useRef(false);
   const started = useRef(false);
   const requestCloseRef = useRef<() => void>(() => {});
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = useReducedMotion() ?? false;
 
-  const color = TYPE_COLORS[p.types[0]] ?? TYPE_COLORS.unknown;
-  const color2 = TYPE_COLORS[p.types[1] ?? p.types[0]] ?? color;
-  const name = pretty(p.name);
+  // `current` is what's shown; `original` stays the card we return to.
+  const [current, setCurrent] = useState(original);
+  const [switched, setSwitched] = useState(false);
+  const scanDelay = switched ? SWITCH_SCAN_DELAY_S : OPEN_SCAN_DELAY_S;
+  const [t0, setT0] = useState(() => performance.now());
+  const [readyId, setReadyId] = useState<number | null>(null);
+  const timeline: Timeline = { t0, go: readyId === current.id, reduce: reduceMotion };
+
+  // The scan and the readouts wait until the artwork is decoded (usually already is, thanks
+  // to the hover preload; otherwise this holds both back instead of letting numbers run ahead).
+  useEffect(() => {
+    let alive = true;
+    const img = new Image();
+    img.src = current.artwork ?? current.sprite;
+    Promise.race([img.decode().catch(() => {}), sleep(2500)]).then(() => {
+      if (alive) setReadyId(current.id);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [current.id, current.artwork, current.sprite]);
+
+  const color = colorOf(current);
+  const name = pretty(current.name);
 
   // The panel starts exactly over the card and grows to full screen.
   const [start] = useState(() => ({
@@ -91,7 +154,7 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
     };
   }, []);
 
-  // ---- Open: card -> full screen, sprite flies to its slot, pixel -> artwork ----
+  // ---- Open: card -> full screen, sprite flies to its slot, pixel -> silhouette ----
   useLayoutEffect(() => {
     const slot = slotRef.current;
     if (started.current || !slot) return;
@@ -122,7 +185,7 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
     if (spriteRef.current) spriteRef.current.style.transform = `translateX(${fromX}px) translateY(${fromY}px) scale(${fromScale})`;
     animate("[data-d=sprite]", { x: [fromX, 0], y: [fromY, 0], scale: [fromScale, 1] }, { duration: OPEN_S, ease: EASE });
     animate("[data-d=sprite]", { opacity: [0, 1] }, { duration: 0.12 });
-    // Pixel sprite upgrades to artwork while it flies.
+    // The card's pixel sprite upgrades to the artwork (a silhouette until the scan) while it flies.
     animate("[data-d=px]", { opacity: [1, 0] }, { duration: 0.35, delay: 0.12 });
     animate("[data-d=art]", { opacity: [0, 1] }, { duration: 0.35, delay: 0.12 });
 
@@ -130,13 +193,13 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
     animate("[data-d=content], [data-d=chrome]", { opacity: [0, 1], y: [14, 0] }, { duration: 0.4, delay: CONTENT_DELAY_S });
   }, [animate, origin, reduceMotion, start]);
 
-  // ---- Close: reverse everything, back to wherever the card is *now* ----
+  // ---- Close: reverse everything, back to wherever the original card is *now* ----
   const requestClose = useCallback(() => {
     if (closing.current) return;
     closing.current = true;
 
     // Re-measure: the grid may have been scrolled, resized or re-filtered since opening.
-    const rects = measureCard(p.id);
+    const rects = measureCard(original.id);
     const slot = slotRef.current?.getBoundingClientRect();
     const animations: { finished: Promise<unknown> }[] = [];
 
@@ -163,6 +226,8 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
           { duration: CLOSE_S, ease: EASE },
         ),
         animate("[data-d=sprite]", { opacity: 0 }, { duration: 0.1, delay: CLOSE_S - 0.1 }),
+        // The pixel layer always holds the *original* card's sprite, so even after moving
+        // along an evolution chain the flight lands as the card's own sprite.
         animate("[data-d=px]", { opacity: 1 }, { duration: 0.3 }),
         animate("[data-d=art]", { opacity: 0 }, { duration: 0.3 }),
         animate("[data-d=tint]", { opacity: 0 }, { duration: CLOSE_S, ease: EASE }),
@@ -175,7 +240,7 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
     }
 
     Promise.all(animations.map((a) => a.finished)).then(onClosed);
-  }, [animate, onClosed, p.id, reduceMotion]);
+  }, [animate, onClosed, original.id, reduceMotion]);
 
   useEffect(() => {
     requestCloseRef.current = requestClose;
@@ -214,23 +279,33 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
   }, [scope]);
 
   // ---- Evolution chain (fetched on demand, cached on the server) ----
+  // Every stage the user can click belongs to this same chain, so it is fetched once for
+  // the original Pokémon and stays put while the rest of the view changes.
   const [evolution, setEvolution] = useState<EvolutionResult | "loading">("loading");
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let live = true;
-    fetchEvolution(p.species).then((result) => {
+    fetchEvolution(original.species).then((result) => {
       if (live) setEvolution(result);
     });
     return () => {
       live = false;
     };
-  }, [p.species, attempt]);
+  }, [original.species, attempt]);
   const retryEvolution = () => {
     setEvolution("loading");
     setAttempt((n) => n + 1);
   };
 
-  const total = Object.values(p.stats).reduce((sum, v) => sum + v, 0);
+  const selectStage = (target: PokemonSummary) => {
+    if (closing.current || target.id === current.id) return;
+    preloadImage(target.artwork);
+    setSwitched(true);
+    setT0(performance.now());
+    setCurrent(target);
+  };
+
+  const total = Object.values(current.stats).reduce((sum, v) => sum + v, 0);
 
   return (
     <div ref={scope} role="dialog" aria-modal="true" aria-label={name} className="fixed inset-0 z-40">
@@ -242,19 +317,28 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
           ...start,
           opacity: 0,
           borderRadius: CARD_RADIUS,
-          borderColor: `color-mix(in srgb, ${color} 55%, transparent)`,
-          background: `radial-gradient(120% 75% at 50% 28%, color-mix(in srgb, ${color} 42%, #0d1117) 0%, #0d1117 72%)`,
+          borderColor: `color-mix(in srgb, ${colorOf(original)} 55%, transparent)`,
+          background: `radial-gradient(120% 75% at 50% 28%, color-mix(in srgb, ${colorOf(original)} 42%, #0d1117) 0%, #0d1117 72%)`,
         }}
       />
-      {/* Background shifts to the Pokémon's type colours. */}
-      <div
-        data-d="tint"
-        className="pointer-events-none fixed inset-0"
-        style={{
-          opacity: 0,
-          background: `radial-gradient(70% 55% at 30% 40%, color-mix(in srgb, ${color} 45%, transparent), transparent 70%), linear-gradient(135deg, color-mix(in srgb, ${color} 38%, #0a0e13) 0%, color-mix(in srgb, ${color2} 32%, #0a0e13) 100%)`,
-        }}
-      />
+      {/* Background shifts to the Pokémon's type colours, and again when you move along the chain. */}
+      <div data-d="tint" className="pointer-events-none fixed inset-0" style={{ opacity: 0 }}>
+        <AnimatePresence initial={false}>
+          <motion.div
+            key={current.id}
+            className="absolute inset-0"
+            style={{
+              background: `radial-gradient(70% 55% at 30% 40%, color-mix(in srgb, ${color} 45%, transparent), transparent 70%), linear-gradient(135deg, color-mix(in srgb, ${color} 38%, #0a0e13) 0%, color-mix(in srgb, ${color2Of(current)} 32%, #0a0e13) 100%)`,
+            }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            // Keep the old layer (essentially) opaque underneath until the new one has faded in. The exit
+            // target must differ from 1 or the animation finishes instantly and the layer vanishes.
+            exit={{ opacity: 0.99, transition: { duration: 0.5 } }}
+            transition={{ duration: 0.5 }}
+          />
+        </AnimatePresence>
+      </div>
 
       <div
         className="absolute inset-0 overflow-y-auto overscroll-contain"
@@ -266,114 +350,136 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
           data-dismiss="true"
           className="mx-auto grid min-h-full max-w-5xl content-center items-start gap-8 px-6 py-20 md:grid-cols-[auto_minmax(0,1fr)] md:gap-14"
         >
-          {/* Sprite slot: the flying sprite lands here. */}
-          {/* Stays in view while a long evolution tree scrolls past on wide screens. */}
+          {/* Sprite slot: the flying sprite lands here. Stays in view while a long evolution tree scrolls. */}
           <div ref={slotRef} className="relative mx-auto aspect-square w-[min(78vw,50vh,440px)] md:sticky md:top-20">
             <div ref={spriteRef} data-d="sprite" className="absolute inset-0 origin-top-left" style={{ opacity: 0 }}>
+              {/* Always the original card's sprite: only used for the flight in and back out. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 data-d="px"
-                src={p.sprite}
+                src={original.sprite}
                 alt=""
                 draggable={false}
-                className={`absolute inset-0 h-full w-full object-contain ${p.pixel ? "[image-rendering:pixelated]" : ""}`}
+                className={`absolute inset-0 h-full w-full object-contain ${original.pixel ? "[image-rendering:pixelated]" : ""}`}
               />
-              {p.artwork && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  data-d="art"
-                  src={p.artwork}
-                  alt={name}
-                  draggable={false}
-                  className="absolute inset-0 h-full w-full object-contain drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]"
-                  style={{ opacity: 0 }}
-                />
-              )}
+              <div data-d="art" className="absolute inset-0" style={{ opacity: 0 }}>
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={current.id}
+                    className="absolute inset-0"
+                    initial={{ opacity: 0, scale: 0.92 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.92 }}
+                    transition={{ duration: SWITCH_S }}
+                  >
+                    <ScanArt pokemon={current} color={color} startDelay={scanDelay} timeline={timeline} />
+                  </motion.div>
+                </AnimatePresence>
+              </div>
             </div>
           </div>
 
           <div data-d="content" data-dismiss="" className="min-w-0 space-y-7" style={{ opacity: 0 }}>
-            <header>
-              <p className="font-mono text-sm text-white/70">#{String(p.number).padStart(4, "0")}</p>
-              <h2 className="mt-1 text-4xl font-bold capitalize tracking-tight text-white md:text-5xl">{name}</h2>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                {p.types.map((t) => (
-                  <span
-                    key={t}
-                    className="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide text-black/80"
-                    style={{ background: TYPE_COLORS[t] ?? TYPE_COLORS.unknown }}
-                  >
-                    {t}
-                  </span>
-                ))}
-                {p.tag && (
-                  <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">
-                    {p.tag}
-                  </span>
-                )}
-              </div>
-            </header>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={current.id}
+                className="space-y-7"
+                initial={{ opacity: 0, x: 18 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -18 }}
+                transition={{ duration: SWITCH_S }}
+              >
+                <header>
+                  <p className="font-mono text-sm text-white/70">#{String(current.number).padStart(4, "0")}</p>
+                  <h2 className="mt-1 text-4xl font-bold capitalize tracking-tight text-white md:text-5xl">{name}</h2>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {current.types.map((t) => (
+                      <span
+                        key={t}
+                        className="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide text-black/80"
+                        style={{ background: TYPE_COLORS[t] ?? TYPE_COLORS.unknown }}
+                      >
+                        {t}
+                      </span>
+                    ))}
+                    {current.tag && (
+                      <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">
+                        {current.tag}
+                      </span>
+                    )}
+                  </div>
+                </header>
 
-            <section aria-label="Base stats">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Base stats</h3>
-              <ul className="space-y-1.5">
-                {STAT_ROWS.map(({ key, label }, i) => (
-                  <li key={key} className="grid grid-cols-[4.5rem_2.25rem_1fr] items-center gap-3 text-sm">
-                    <span className="text-white/75">{label}</span>
-                    <span className="font-mono tabular-nums text-white">{p.stats[key]}</span>
-                    <div className="h-2.5 overflow-hidden rounded-full bg-black/35">
-                      <motion.div
-                        className="h-full rounded-full"
-                        style={{ background: `linear-gradient(90deg, ${color}, color-mix(in srgb, ${color} 55%, white))` }}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${(p.stats[key] / MAX_BASE_STAT) * 100}%` }}
-                        // Bars fill one by one, after the view has finished growing.
-                        transition={{ duration: 0.7, ease: EASE, delay: reduceMotion ? 0 : OPEN_S + 0.05 + i * 0.1 }}
+                <section aria-label="Base stats">
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Base stats</h3>
+                  <ul className="space-y-1.5">
+                    {STAT_ROWS.map(({ key, label }, i) => (
+                      <StatRow
+                        key={key}
+                        label={label}
+                        value={current.stats[key]}
+                        color={color}
+                        delay={scanDelay + i * STAT_STAGGER_S}
+                        timeline={timeline}
                       />
-                    </div>
-                  </li>
-                ))}
-                <li className="grid grid-cols-[4.5rem_2.25rem_1fr] items-center gap-3 border-t border-white/15 pt-1.5 text-sm">
-                  <span className="text-white/75">Total</span>
-                  <span className="font-mono tabular-nums text-white">{total}</span>
-                </li>
-              </ul>
-            </section>
-
-            <div className="grid gap-6 sm:grid-cols-2">
-              <section aria-label="Abilities">
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Abilities</h3>
-                <ul className="flex flex-wrap gap-2">
-                  {p.abilities.length === 0 && <li className="text-sm text-white/60">None listed</li>}
-                  {p.abilities.map((a) => (
-                    <li
-                      key={a.name}
-                      className="rounded-lg border border-white/20 bg-black/25 px-2.5 py-1 text-sm capitalize text-white"
-                    >
-                      {pretty(a.name)}
-                      {a.hidden && <span className="ml-1.5 text-[10px] uppercase tracking-wider text-white/60">Hidden</span>}
+                    ))}
+                    <li className="grid grid-cols-[4.5rem_2.25rem_1fr] items-center gap-3 border-t border-white/15 pt-1.5 text-sm">
+                      <span className="text-white/75">Total</span>
+                      <span className="font-mono tabular-nums text-white">
+                        <Readout value={total} delay={scanDelay + 0.5} duration={STAT_TICK_S} timeline={timeline} />
+                      </span>
                     </li>
-                  ))}
-                </ul>
-              </section>
-              <section aria-label="Size">
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Size</h3>
-                <dl className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="rounded-lg border border-white/20 bg-black/25 px-3 py-1.5">
-                    <dt className="text-[10px] uppercase tracking-wider text-white/60">Height</dt>
-                    <dd className="font-mono text-white">{(p.height / 10).toFixed(1)} m</dd>
-                  </div>
-                  <div className="rounded-lg border border-white/20 bg-black/25 px-3 py-1.5">
-                    <dt className="text-[10px] uppercase tracking-wider text-white/60">Weight</dt>
-                    <dd className="font-mono text-white">{(p.weight / 10).toFixed(1)} kg</dd>
-                  </div>
-                </dl>
-              </section>
-            </div>
+                  </ul>
+                </section>
 
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <section aria-label="Abilities">
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Abilities</h3>
+                    <ul className="flex flex-wrap gap-2">
+                      {current.abilities.length === 0 && <li className="text-sm text-white/60">None listed</li>}
+                      {current.abilities.map((a) => (
+                        <li
+                          key={a.name}
+                          className="rounded-lg border border-white/20 bg-black/25 px-2.5 py-1 text-sm capitalize text-white"
+                        >
+                          {pretty(a.name)}
+                          {a.hidden && <span className="ml-1.5 text-[10px] uppercase tracking-wider text-white/60">Hidden</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                  <section aria-label="Size">
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Size</h3>
+                    <dl className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-lg border border-white/20 bg-black/25 px-3 py-1.5">
+                        <dt className="text-[10px] uppercase tracking-wider text-white/60">Height</dt>
+                        <dd className="font-mono text-white">
+                          <Readout value={current.height / 10} decimals={1} delay={scanDelay + 0.1} duration={1.1} timeline={timeline} /> m
+                        </dd>
+                      </div>
+                      <div className="rounded-lg border border-white/20 bg-black/25 px-3 py-1.5">
+                        <dt className="text-[10px] uppercase tracking-wider text-white/60">Weight</dt>
+                        <dd className="font-mono text-white">
+                          <Readout value={current.weight / 10} decimals={1} delay={scanDelay + 0.1} duration={1.1} timeline={timeline} /> kg
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+
+            {/* Outside the swapping block, so it (and keyboard focus on a stage) survives a switch. */}
             <section aria-label="Evolution chain">
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Evolution</h3>
-              <EvolutionSection state={evolution} current={p.species} accent={color} onRetry={retryEvolution} />
+              <EvolutionSection
+                state={evolution}
+                current={current}
+                accent={color}
+                resolveSpecies={resolveSpecies}
+                onSelect={selectStage}
+                onRetry={retryEvolution}
+              />
             </section>
           </div>
         </div>
@@ -394,15 +500,156 @@ export function DetailView({ pokemon: p, origin, onClosed }: Props) {
   );
 }
 
+/**
+ * The artwork as a dark silhouette, resolved top to bottom by a glowing scan bar.
+ * Remounted (via key) for each Pokémon so the reveal replays.
+ */
+function ScanArt({
+  pokemon: p,
+  color,
+  startDelay,
+  timeline,
+}: {
+  pokemon: PokemonSummary;
+  color: string;
+  startDelay: number;
+  timeline: Timeline;
+}) {
+  const { reduce, go } = timeline;
+  const [scope, animate] = useAnimate<HTMLDivElement>();
+  const src = p.artwork ?? p.sprite;
+  const pixelated = !p.artwork && p.pixel;
+  const imgClass = `absolute inset-0 h-full w-full object-contain ${pixelated ? "[image-rendering:pixelated]" : ""}`;
+
+  const { t0 } = timeline;
+  useEffect(() => {
+    // Reduced motion: straight to the final, fully revealed state. Otherwise wait for the artwork.
+    if (reduce || !go) return;
+    const delay = remaining({ t0, go, reduce }, startDelay);
+    const running = [
+      animate("[data-s=full]", { clipPath: ["inset(0 0 100% 0)", "inset(0 0 0% 0)"] }, { duration: SCAN_S, delay, ease: SCAN_EASE }),
+      animate("[data-s=bar]", { top: ["0%", "100%"] }, { duration: SCAN_S, delay, ease: SCAN_EASE }),
+      animate("[data-s=bar]", { opacity: [0, 1, 1, 0] }, { duration: SCAN_S, delay, ease: "linear", times: [0, 0.06, 0.94, 1] }),
+      animate("[data-s=sil]", { opacity: 0 }, { duration: 0.25, delay: delay + SCAN_S }),
+    ];
+    return () => running.forEach((a) => a.stop());
+  }, [animate, reduce, go, t0, startDelay]);
+
+  return (
+    <div ref={scope} className="absolute inset-0">
+      {!reduce && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          data-s="sil"
+          src={src}
+          alt=""
+          draggable={false}
+          className={imgClass}
+          style={{ filter: `brightness(0) drop-shadow(0 0 10px ${color}aa)` }}
+        />
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        data-s="full"
+        src={src}
+        alt={pretty(p.name)}
+        draggable={false}
+        className={`${imgClass} drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]`}
+        style={{ clipPath: reduce ? undefined : "inset(0 0 100% 0)" }}
+      />
+      {!reduce && (
+        <div
+          data-s="bar"
+          aria-hidden
+          className="pointer-events-none absolute inset-x-[-6%] h-0.75 -translate-y-1/2"
+          style={{
+            top: "0%",
+            opacity: 0,
+            background: `linear-gradient(90deg, transparent, ${color}, #fff, ${color}, transparent)`,
+            boxShadow: `0 0 14px 4px ${color}, 0 0 40px 10px color-mix(in srgb, ${color} 55%, transparent)`,
+          }}
+        >
+          <span
+            className="absolute inset-x-[6%] bottom-full h-16"
+            style={{
+              background: `linear-gradient(to bottom, transparent, color-mix(in srgb, ${color} 30%, transparent))`,
+              // Feather the sides so the trail has no hard rectangular edges.
+              maskImage: "linear-gradient(90deg, transparent, black 25%, black 75%, transparent)",
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A number that ticks up from zero like a data readout (skipped entirely for reduced motion). */
+function useCount(value: number, delay: number, duration: number, tl: Timeline) {
+  const { reduce, go, t0 } = tl;
+  const mv = useMotionValue(reduce ? value : 0);
+  useEffect(() => {
+    if (reduce) {
+      mv.set(value);
+      return;
+    }
+    mv.set(0);
+    if (!go) return; // holds at zero until the scan can start
+    const controls = tween(mv, value, { duration, delay: remaining({ t0, go, reduce }, delay), ease: READOUT_EASE });
+    return () => controls.stop();
+  }, [mv, value, delay, duration, reduce, go, t0]);
+  return mv;
+}
+
+function Readout({
+  value,
+  delay,
+  duration,
+  decimals = 0,
+  timeline,
+}: {
+  value: number;
+  delay: number;
+  duration: number;
+  decimals?: number;
+  timeline: Timeline;
+}) {
+  const mv = useCount(value, delay, duration, timeline);
+  const text = useTransform(mv, (v) => v.toFixed(decimals));
+  return <motion.span>{text}</motion.span>;
+}
+
+function StatRow({ label, value, color, delay, timeline }: { label: string; value: number; color: string; delay: number; timeline: Timeline }) {
+  // The number and its bar share one animated value, so they tick and fill together.
+  const mv = useCount(value, delay, STAT_TICK_S, timeline);
+  const text = useTransform(mv, (v) => Math.round(v).toString());
+  const width = useTransform(mv, (v) => `${(v / MAX_BASE_STAT) * 100}%`);
+  return (
+    <li className="grid grid-cols-[4.5rem_2.25rem_1fr] items-center gap-3 text-sm">
+      <span className="text-white/75">{label}</span>
+      <motion.span className="font-mono tabular-nums text-white">{text}</motion.span>
+      <div className="h-2.5 overflow-hidden rounded-full bg-black/35">
+        <motion.div
+          className="h-full rounded-full"
+          style={{ width, background: `linear-gradient(90deg, ${color}, color-mix(in srgb, ${color} 55%, white))` }}
+        />
+      </div>
+    </li>
+  );
+}
+
 function EvolutionSection({
   state,
   current,
   accent,
+  resolveSpecies,
+  onSelect,
   onRetry,
 }: {
   state: EvolutionResult | "loading";
-  current: string;
+  current: PokemonSummary;
   accent: string;
+  resolveSpecies: (species: string) => PokemonSummary | undefined;
+  onSelect: (p: PokemonSummary) => void;
   onRetry: () => void;
 }) {
   if (state === "loading") {
@@ -433,22 +680,31 @@ function EvolutionSection({
   }
   return (
     <div className="overflow-x-auto pb-2">
-      <EvolutionBranch node={state.chain} current={current} accent={accent} />
+      <EvolutionBranch node={state.chain} current={current} accent={accent} resolveSpecies={resolveSpecies} onSelect={onSelect} />
     </div>
   );
 }
 
-function EvolutionBranch({ node, current, accent }: { node: EvolutionNode; current: string; accent: string }) {
+interface BranchProps {
+  node: EvolutionNode;
+  current: PokemonSummary;
+  accent: string;
+  resolveSpecies: (species: string) => PokemonSummary | undefined;
+  onSelect: (p: PokemonSummary) => void;
+}
+
+function EvolutionBranch({ node, current, accent, resolveSpecies, onSelect }: BranchProps) {
+  const shared = { current, accent, resolveSpecies, onSelect };
   // Many-way branches (Eevee has 8) read better as a grid under the parent than as one tall column.
   if (node.children.length > 3) {
     return (
       <div className="flex flex-col gap-3">
-        <EvolutionStage node={node} active={node.species === current} accent={accent} />
+        <EvolutionStage node={node} {...shared} />
         <div className="grid grid-cols-[repeat(auto-fill,6rem)] gap-x-2 gap-y-3">
           {node.children.map((child) => (
             <div key={child.species} className="flex flex-col items-center gap-1">
               <span className="text-center text-[10px] leading-tight text-white/70">↓ {child.requirement ?? "?"}</span>
-              <EvolutionBranch node={child} current={current} accent={accent} />
+              <EvolutionBranch node={child} {...shared} />
             </div>
           ))}
         </div>
@@ -457,7 +713,7 @@ function EvolutionBranch({ node, current, accent }: { node: EvolutionNode; curre
   }
   return (
     <div className="flex items-center gap-2">
-      <EvolutionStage node={node} active={node.species === current} accent={accent} />
+      <EvolutionStage node={node} {...shared} />
       {node.children.length > 0 && (
         <div className="flex flex-col gap-3">
           {node.children.map((child) => (
@@ -466,7 +722,7 @@ function EvolutionBranch({ node, current, accent }: { node: EvolutionNode; curre
                 <span aria-hidden>→</span>
                 <span>{child.requirement ?? "?"}</span>
               </div>
-              <EvolutionBranch node={child} current={current} accent={accent} />
+              <EvolutionBranch node={child} {...shared} />
             </div>
           ))}
         </div>
@@ -475,19 +731,49 @@ function EvolutionBranch({ node, current, accent }: { node: EvolutionNode; curre
   );
 }
 
-function EvolutionStage({ node, active, accent }: { node: EvolutionNode; active: boolean; accent: string }) {
-  return (
-    <div
-      className="flex w-24 shrink-0 flex-col items-center rounded-xl border p-2 text-center"
-      style={{
-        borderColor: active ? accent : "rgba(255,255,255,0.18)",
-        background: active ? `color-mix(in srgb, ${accent} 28%, rgba(0,0,0,0.3))` : "rgba(0,0,0,0.25)",
-      }}
-      aria-current={active ? "true" : undefined}
-    >
+function EvolutionStage({
+  node,
+  current,
+  accent,
+  resolveSpecies,
+  onSelect,
+}: { node: EvolutionNode } & Omit<BranchProps, "node">) {
+  const target = resolveSpecies(node.species);
+  const highlighted = node.species === current.species;
+  const isCurrent = target?.id === current.id;
+  const style = {
+    borderColor: highlighted ? accent : "rgba(255,255,255,0.18)",
+    background: highlighted ? `color-mix(in srgb, ${accent} 28%, rgba(0,0,0,0.3))` : "rgba(0,0,0,0.25)",
+  };
+  const body = (
+    <>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={node.sprite} alt="" width={72} height={72} loading="lazy" className="h-[72px] w-[72px] [image-rendering:pixelated]" />
       <span className="mt-1 w-full truncate text-xs capitalize text-white">{pretty(node.species)}</span>
-    </div>
+    </>
+  );
+  const base = "flex w-24 shrink-0 flex-col items-center rounded-xl border p-2 text-center";
+
+  if (!target) {
+    return (
+      <div className={base} style={style} aria-current={highlighted ? "true" : undefined}>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={`${base} transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 ${isCurrent ? "cursor-default" : "cursor-pointer hover:brightness-125"}`}
+      style={style}
+      aria-label={isCurrent ? `${pretty(node.species)} (shown)` : `View ${pretty(node.species)}`}
+      aria-current={highlighted ? "true" : undefined}
+      // Warm the artwork so the scan can start the moment the view switches.
+      onPointerEnter={() => preloadImage(target.artwork)}
+      onFocus={() => preloadImage(target.artwork)}
+      onClick={() => onSelect(target)}
+    >
+      {body}
+    </button>
   );
 }

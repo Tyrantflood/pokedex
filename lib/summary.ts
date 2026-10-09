@@ -9,6 +9,8 @@ export interface PokemonSummary {
   name: string;
   /** Species name, used to look up the evolution chain. */
   species: string;
+  /** True for a species' default form (as opposed to Mega, regional or other variants). */
+  base: boolean;
   /** "Mega", "G-Max" or a region name for notable forms; null otherwise. */
   tag: string | null;
   types: PokemonType[];
@@ -45,6 +47,7 @@ export function toSummary(p: Pokemon): PokemonSummary {
     number: p.number,
     name: p.name,
     species: p.species,
+    base: p.form.kind === "base",
     tag: formTag(p),
     types: p.types,
     sprite: p.sprites.normal ?? p.artwork.normal ?? PLACEHOLDER_SPRITE,
