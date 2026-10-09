@@ -2,7 +2,7 @@
 
 import { useEffect, type RefObject } from "react";
 
-const HINT_DELAY_MS = 1000;
+const HINT_DELAY_MS = 500;
 const HINT_TEXT = "Drag onto another card to compare";
 const DONE_KEY = "pokedex:drag-compared";
 

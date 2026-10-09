@@ -122,7 +122,7 @@ The Vercel layout is assumed from the Build Output API, not observed.
   `brightness(0) invert(1)` image whose opacity pulses (7 pulses, each shorter), never an animated filter. The swap happens under
   the flash; the scan then starts `EVOLVE_REVEAL_S` after the swap. Measured on a phone viewport at 4x CPU: about 62 fps, about 3 ms/s raster.
 
-- **Drag hint** (`use-drag-hint.ts`): after 1 s resting a mouse/pen on a card, one DOM label says how to drag-compare. Never for touch, during a drag/comparison/detail view, or once a *drag* compare completed (`sessionStorage` `pokedex:drag-compared`; the Compare button does not count).
+- **Drag hint** (`use-drag-hint.ts`): after 0.5 s resting a mouse/pen on a card, one DOM label says how to drag-compare. Never for touch, during a drag/comparison/detail view, or once a *drag* compare completed (`sessionStorage` `pokedex:drag-compared`; the Compare button does not count).
 
 ### Other settled choices
 - **Night mode:** a static tinted `.night-veil` layer faded by opacity (midnight to 6:00 local). A CSS `filter`
