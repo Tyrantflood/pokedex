@@ -24,6 +24,11 @@ export interface PokemonSummary {
   artwork: string | null;
   /** Shiny version of the detail-view image (artwork, or the pixel sprite if the form has no artwork). */
   shinyArtwork: string | null;
+  /** Animated Showdown sprite (GIF), if the form has one. */
+  animated: string | null;
+  animatedShiny: string | null;
+  /** Shiny pixel sprite (static), the fallback when there is no animated shiny. */
+  spriteShiny: string | null;
   generation: number;
   stats: PokemonStats;
   abilities: PokemonAbility[];
@@ -59,6 +64,9 @@ export function toSummary(p: Pokemon): PokemonSummary {
     cry: p.cries.latest ?? p.cries.legacy,
     artwork: p.artwork.normal,
     shinyArtwork: p.artwork.normal ? p.artwork.shiny : p.sprites.shiny,
+    animated: p.animated.normal,
+    animatedShiny: p.animated.shiny,
+    spriteShiny: p.sprites.shiny,
     generation: generationOf(p.number),
     stats: p.stats,
     abilities: p.abilities,

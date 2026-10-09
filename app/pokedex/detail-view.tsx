@@ -14,12 +14,14 @@ import { loadEvolutionChain, loadFlavorText, type EvolutionResult } from "@/app/
 import type { EvolutionNode } from "@/lib/evolution";
 import { evolvesInto } from "@/lib/evolution-path";
 import { stopCry } from "@/lib/cry-audio";
+import { firstFrame } from "@/lib/first-frame";
 import { preloadImage } from "@/lib/preload-image";
 import type { PokemonSummary } from "@/lib/summary";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import { measureCard, type CardRects } from "./card-rects";
 import { CryPanel } from "./cry-panel";
-import { EVOLVE_REVEAL_S, EvolveFx, Sparkles, type ArtImage } from "./evolve-fx";
+import { artSet, readArtMode, saveArtMode, type ArtImage, type ArtMode, type ArtSet, type StillImage } from "./art";
+import { EVOLVE_REVEAL_S, EvolveFx, Sparkles } from "./evolve-fx";
 import { FlavorText } from "./flavor-text";
 import { TypeFx, fxKindOf, useFrameGuard } from "./type-fx";
 
@@ -41,6 +43,8 @@ const SWITCH_SCAN_DELAY_S = 0.2;
 const EVOLVE_SCAN_DELAY_S = EVOLVE_REVEAL_S;
 /** The shiny crossfade starts this long after the sparkles, so it lands in the glow. */
 const SHINY_FADE_DELAY_S = 0.22;
+/** Length of one idle bob, in seconds (matches .art-bob in globals.css). */
+const BOB_S = 2.6;
 /** Exit and enter time when moving between Pokémon (each half of a quick swap). */
 const SWITCH_S = 0.18;
 const READOUT_EASE = [0.16, 1, 0.3, 1] as const;
@@ -57,18 +61,14 @@ const STAT_ROWS = [
 ] as const;
 
 const pretty = (s: string) => s.replace(/-/g, " ");
+/** Timeline clock reading (a module-level helper, so event handlers can use it without tripping the render-purity lint). */
+const stamp = () => performance.now();
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const decodeImage = (src: string) => {
   const img = new Image();
   img.src = src;
   return img.decode().catch(() => {});
 };
-
-/** What the sprite slot draws for a Pokémon: official artwork (or its pixel sprite), shiny if asked and available. */
-const artOf = (p: PokemonSummary, shiny: boolean): ArtImage => ({
-  src: shiny && p.shinyArtwork ? p.shinyArtwork : (p.artwork ?? p.sprite),
-  pixelated: !p.artwork && p.pixel,
-});
 
 const colorOf = (p: PokemonSummary) => TYPE_COLORS[p.types[0]] ?? TYPE_COLORS.unknown;
 const color2Of = (p: PokemonSummary) => TYPE_COLORS[p.types[1] ?? p.types[0]] ?? colorOf(p);
@@ -147,17 +147,30 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
 
   // `current` is what's shown; `original` stays the card we return to.
   const [current, setCurrent] = useState(original);
-  const [switchKind, setSwitchKind] = useState<"open" | "quick" | "evolve">("open");
-  const scanDelay = switchKind === "evolve" ? EVOLVE_SCAN_DELAY_S : switchKind === "quick" ? SWITCH_SCAN_DELAY_S : OPEN_SCAN_DELAY_S;
+  type SwitchKind = "open" | "quick" | "evolve";
+  const delayOf = (kind: SwitchKind) => (kind === "evolve" ? EVOLVE_SCAN_DELAY_S : kind === "quick" ? SWITCH_SCAN_DELAY_S : OPEN_SCAN_DELAY_S);
+  // The readouts restart when the Pokémon changes; the scan also restarts when only the image style changes.
+  const [switchKind, setSwitchKind] = useState<SwitchKind>("open");
+  const [artKind, setArtKind] = useState<SwitchKind>("open");
+  const scanDelay = delayOf(switchKind);
+  // Artwork or animated sprites; remembered for the browser session.
+  const [mode, setMode] = useState<ArtMode>(readArtMode);
+  // Animated sprites that failed to load (PokéAPI lists a few that 404): treated as missing.
+  const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
+  const art = artSet(current, mode, broken);
+  const artKey = `${current.id}:${art.base.src}`;
   // Shiny stays on while moving along the chain (when the next form has a shiny version).
   const [shiny, setShiny] = useState(false);
   const [burst, setBurst] = useState(0);
-  const showShiny = shiny && current.shinyArtwork !== null;
+  const showShiny = shiny && art.shiny !== null;
   // Set while the evolution sequence plays; stage clicks are ignored until it ends.
-  const [evo, setEvo] = useState<{ from: ArtImage; to: ArtImage; target: PokemonSummary } | null>(null);
+  const [evo, setEvo] = useState<{ from: StillImage; to: StillImage; target: PokemonSummary } | null>(null);
   const [t0, setT0] = useState(() => performance.now());
+  const [artT0, setArtT0] = useState(t0);
   const [readyId, setReadyId] = useState<number | null>(null);
+  const [readyArt, setReadyArt] = useState<string | null>(null);
   const timeline: Timeline = { t0, go: readyId === current.id, reduce: reduceMotion };
+  const artTimeline: Timeline = { t0: artT0, go: readyArt === artKey, reduce: reduceMotion };
 
   // Pokédex entry for whichever Pokémon is showing. undefined = still loading.
   const [flavors, setFlavors] = useState<Record<string, string | null>>({});
@@ -183,23 +196,35 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   const dropFx = useCallback(() => setFxOn(false), []);
   useFrameGuard(fxOn && !reduceMotion, dropFx);
 
-  // The scan and the readouts wait until the artwork is decoded (usually already is, thanks
-  // to the hover preload; otherwise this holds both back instead of letting numbers run ahead).
+  // The scan and the readouts wait until the image is decoded (usually already is, thanks to the
+  // hover preload; otherwise this holds both back instead of letting numbers run ahead).
+  const baseSrc = art.base.src;
+  const baseAnimated = art.base.animated;
+  const shinySrc = art.shiny?.src ?? null;
   useEffect(() => {
     let alive = true;
     const img = new Image();
-    img.src = current.artwork ?? current.sprite;
-    Promise.race([img.decode().catch(() => {}), sleep(2500)]).then(() => {
-      if (alive) {
-        setReadyId(current.id);
-        // Warm the shiny image too, so the toggle can start its sparkles and crossfade at once.
-        preloadImage(current.shinyArtwork);
+    img.src = baseSrc;
+    const decoded = img.decode().then(
+      () => true,
+      () => false,
+    );
+    Promise.race([decoded, sleep(2500).then(() => true)]).then((ok) => {
+      if (!alive) return;
+      if (!ok && baseAnimated) {
+        // The animated sprite is missing: re-render with the static fallback instead.
+        setBroken((prev) => new Set(prev).add(baseSrc));
+        return;
       }
+      setReadyId(current.id);
+      setReadyArt(`${current.id}:${baseSrc}`);
+      // Warm the shiny image too, so the toggle can start its sparkles and crossfade at once.
+      preloadImage(shinySrc);
     });
     return () => {
       alive = false;
     };
-  }, [current.id, current.artwork, current.sprite, current.shinyArtwork]);
+  }, [current.id, baseSrc, baseAnimated, shinySrc]);
 
   const color = colorOf(current);
   const name = pretty(current.name);
@@ -376,24 +401,54 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
   };
 
   const commitSwitch = (target: PokemonSummary, kind: "quick" | "evolve") => {
+    const now = performance.now();
     setSwitchKind(kind);
-    setT0(performance.now());
+    setArtKind(kind);
+    setT0(now);
+    setArtT0(now);
     setCurrent(target);
   };
 
+  const chooseMode = (next: ArtMode) => {
+    if (next === mode || evo || closing.current) return;
+    setMode(next);
+    saveArtMode(next);
+    preloadImage(artSet(current, next, broken).base.src);
+    // Only the picture changes: it replays the scan reveal, while the numbers stay put.
+    setArtKind("quick");
+    setArtT0(stamp());
+  };
+
   const selectStage = (target: PokemonSummary) => {
-    if (closing.current || evo || target.id === current.id) return;
-    preloadImage(target.artwork);
+    if (closing.current || evo || starting.current || target.id === current.id) return;
+    preloadImage(artSet(target, mode, broken).base.src);
     stopCry();
     // Moving *forward* in the chain plays the evolution sequence; going back (or sideways) is the quick switch.
     const forward = evolution !== "loading" && evolution.ok && evolvesInto(evolution.chain, current.species, target.species);
     if (forward && !reduceMotion) {
-      const nextShiny = shiny && target.shinyArtwork !== null;
-      preloadImage(nextShiny ? target.shinyArtwork : target.artwork);
-      setEvo({ from: artOf(current, showShiny), to: artOf(target, nextShiny), target });
+      const next = artSet(target, mode, broken);
+      const nextArt = shiny && next.shiny ? next.shiny : next.base;
+      preloadImage(nextArt.src);
+      startEvolution(showShiny && art.shiny ? art.shiny : art.base, nextArt, target);
       return;
     }
     commitSwitch(target, "quick");
+  };
+
+  // The white silhouettes are static: an animated sprite is frozen to its first frame first, so the pulsing
+  // never runs a filter on every animation frame. (Cached by then, so this is normally instant.)
+  const starting = useRef(false);
+  const startEvolution = (from: ArtImage, to: ArtImage, target: PokemonSummary) => {
+    if (starting.current) return;
+    starting.current = true;
+    const still = (img: ArtImage): Promise<StillImage> =>
+      img.animated
+        ? Promise.race([firstFrame(img.src), sleep(1500).then(() => null)]).then((url) => (url ? { src: url, pixelated: img.pixelated } : { src: img.src, pixelated: img.pixelated }))
+        : Promise.resolve({ src: img.src, pixelated: img.pixelated });
+    Promise.all([still(from), still(to)]).then(([f, t]) => {
+      starting.current = false;
+      if (!closing.current) setEvo({ from: f, to: t, target });
+    });
   };
 
   const toggleShiny = () => {
@@ -482,14 +537,14 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
               <div data-d="art" className="absolute inset-0" style={{ opacity: 0 }}>
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div
-                    key={current.id}
+                    key={artKey}
                     className="absolute inset-0"
                     initial={{ opacity: 0, scale: 0.92 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.92 }}
                     transition={{ duration: SWITCH_S }}
                   >
-                    <ScanArt pokemon={current} color={color} startDelay={scanDelay} timeline={timeline} shiny={showShiny} burst={burst} />
+                    <ScanArt name={name} art={art} color={color} startDelay={delayOf(artKind)} timeline={artTimeline} shiny={showShiny} burst={burst} />
                   </motion.div>
                 </AnimatePresence>
                 {evo && (
@@ -509,13 +564,29 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
 
           {/* Fades in with the rest of the content (data-d="chrome"). Remounts per Pokémon. */}
           <div data-d="chrome" className="flex flex-col gap-4" style={{ opacity: 0 }}>
-            {current.shinyArtwork && (
+            <div role="group" aria-label="Image style" className="mx-auto flex rounded-full border border-white/25 bg-black/30 p-0.5 text-sm font-semibold">
+              {(["artwork", "animated"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={mode === m}
+                  onClick={() => chooseMode(m)}
+                  className="rounded-full px-3.5 py-1 capitalize text-white/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 aria-pressed:bg-white/20 aria-pressed:text-white"
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            {mode === "animated" && !art.base.animated && (
+              <p className="-mt-2 text-center text-xs text-white/60">No animated sprite for this form: static sprite with an idle bob.</p>
+            )}
+            {art.shiny && (
               <button
                 type="button"
                 aria-pressed={showShiny}
                 onClick={toggleShiny}
-                onPointerEnter={() => preloadImage(current.shinyArtwork)}
-                onFocus={() => preloadImage(current.shinyArtwork)}
+                onPointerEnter={() => preloadImage(art.shiny?.src ?? null)}
+                onFocus={() => preloadImage(art.shiny?.src ?? null)}
                 className="mx-auto flex items-center gap-2 rounded-full border border-white/25 bg-black/30 px-4 py-1.5 text-sm font-semibold text-white hover:bg-black/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 aria-pressed:border-amber-200/70 aria-pressed:bg-amber-200/15 aria-pressed:text-amber-100"
               >
                 <span aria-hidden>✦</span> Shiny
@@ -663,18 +734,84 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
 }
 
 /**
- * The artwork as a dark silhouette, resolved top to bottom by a glowing scan bar.
- * Remounted (via key) for each Pokémon so the reveal replays.
+ * The first frame of an animated image: `undefined` while it is being extracted, `null` if it can't be
+ * (callers then fall back), and the still image's URL otherwise. Not animated: always `null`.
+ */
+function useStill(img: ArtImage | null): string | null | undefined {
+  const src = img?.animated ? img.src : null;
+  const [result, setResult] = useState<{ src: string; still: string | null } | null>(null);
+  useEffect(() => {
+    if (!src) return;
+    let alive = true;
+    firstFrame(src).then((still) => {
+      if (alive) setResult({ src, still });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [src]);
+  if (!src) return null;
+  return result?.src === src ? result.still : undefined;
+}
+
+/**
+ * One image in the sprite slot. Static sprites standing in for a missing animation get the idle bob;
+ * every bobbing layer is phase-aligned to the wall clock, so layers mounted at different times
+ * (the normal image, the silhouette, the shiny image) still move together.
+ */
+function ArtLayer({
+  src,
+  pixelated,
+  bob,
+  reduce,
+  className = "",
+  style,
+  alt = "",
+  layer,
+}: {
+  src: string;
+  pixelated: boolean;
+  bob: boolean;
+  reduce: boolean;
+  className?: string;
+  style?: CSSProperties;
+  alt?: string;
+  layer: string;
+}) {
+  const [phase] = useState(() => (performance.now() / 1000) % BOB_S);
+  const bobbing = bob && !reduce;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      data-s={layer}
+      src={src}
+      alt={alt}
+      draggable={false}
+      className={`absolute inset-0 h-full w-full object-contain ${pixelated ? "[image-rendering:pixelated]" : ""} ${bobbing ? "art-bob" : ""} ${className}`}
+      style={bobbing ? { ...style, animationDelay: `-${phase}s` } : style}
+    />
+  );
+}
+
+/**
+ * The image as a dark silhouette, resolved top to bottom by a glowing scan bar.
+ * Remounted (via key) for each Pokémon and image style so the reveal replays.
+ *
+ * Animated sprites play inside the reveal. The silhouette and, under reduced motion, the whole
+ * image use the sprite's first frame instead, so nothing filtered ever animates and reduced
+ * motion really does pause.
  */
 function ScanArt({
-  pokemon: p,
+  name,
+  art,
   color,
   startDelay,
   timeline,
   shiny,
   burst,
 }: {
-  pokemon: PokemonSummary;
+  name: string;
+  art: ArtSet;
   color: string;
   startDelay: number;
   timeline: Timeline;
@@ -684,9 +821,21 @@ function ScanArt({
 }) {
   const { reduce, go } = timeline;
   const [scope, animate] = useAnimate<HTMLDivElement>();
-  const src = p.artwork ?? p.sprite;
-  const pixelated = !p.artwork && p.pixel;
-  const imgClass = `absolute inset-0 h-full w-full object-contain ${pixelated ? "[image-rendering:pixelated]" : ""}`;
+  const { base } = art;
+  const shinyArt = art.shiny;
+
+  const baseStill = useStill(base);
+  const shinyStill = useStill(shinyArt);
+  /** What to draw for an image: itself, or (paused for reduced motion) its first frame. */
+  const visible = (img: ArtImage, still: string | null | undefined): (StillImage & { bob: boolean }) | null => {
+    if (!img.animated || !reduce) return img;
+    if (still === undefined) return null; // still being extracted
+    return { ...(still ? { src: still, pixelated: img.pixelated } : img.fallback), bob: false };
+  };
+  const baseShown = visible(base, baseStill);
+  const shinyShown = shinyArt ? visible(shinyArt, shinyStill) : null;
+  // Silhouette: the first frame of an animated sprite (or the sprite itself if there is none).
+  const silSrc = base.animated ? (baseStill === undefined ? null : (baseStill ?? base.src)) : base.src;
 
   // The shiny image only exists once it has been wanted, and is crossfaded over the normal one.
   // Its starting opacity is fixed at mount (a stable style prop) so React never fights the animation.
@@ -694,7 +843,7 @@ function ScanArt({
   const lastShiny = useRef(shiny);
   const [armed, setArmed] = useState(shiny);
   if (shiny && !armed) setArmed(true);
-  const shinySrc = p.shinyArtwork;
+  const shinySrc = shinyArt?.src ?? null;
   useEffect(() => {
     if (lastShiny.current === shiny) return;
     lastShiny.current = shiny;
@@ -720,7 +869,7 @@ function ScanArt({
 
   const { t0 } = timeline;
   useEffect(() => {
-    // Reduced motion: straight to the final, fully revealed state. Otherwise wait for the artwork.
+    // Reduced motion: straight to the final, fully revealed state. Otherwise wait for the image.
     if (reduce || !go) return;
     const delay = remaining({ t0, go, reduce }, startDelay);
     const running = [
@@ -732,36 +881,32 @@ function ScanArt({
     return () => running.forEach((a) => a.stop());
   }, [animate, reduce, go, t0, startDelay]);
 
+  const shadow = "drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]";
   return (
     <div ref={scope} className="absolute inset-0">
-      {!reduce && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          data-s="sil"
-          src={src}
-          alt=""
-          draggable={false}
-          className={imgClass}
+      {!reduce && silSrc && (
+        <ArtLayer
+          layer="sil"
+          src={silSrc}
+          pixelated={base.pixelated}
+          bob={base.bob}
+          reduce={reduce}
           style={{ filter: `brightness(0) drop-shadow(0 0 10px ${color}aa)` }}
         />
       )}
       {/* The scan clips this wrapper, so the shiny image is revealed by the scan too. */}
       <div data-s="full" className="absolute inset-0" style={{ clipPath: reduce ? undefined : "inset(0 0 100% 0)" }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
-          alt={pretty(p.name) + (shiny ? " (shiny)" : "")}
-          draggable={false}
-          className={`${imgClass} drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]`}
-        />
-        {armed && shinySrc && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            data-s="shiny"
-            src={shinySrc}
-            alt=""
-            draggable={false}
-            className={`${imgClass} drop-shadow-[0_18px_24px_rgba(0,0,0,0.45)]`}
+        {baseShown && (
+          <ArtLayer layer="base" src={baseShown.src} pixelated={baseShown.pixelated} bob={baseShown.bob} reduce={reduce} className={shadow} alt={name + (shiny ? " (shiny)" : "")} />
+        )}
+        {armed && shinyShown && (
+          <ArtLayer
+            layer="shiny"
+            src={shinyShown.src}
+            pixelated={shinyShown.pixelated}
+            bob={shinyShown.bob}
+            reduce={reduce}
+            className={shadow}
             style={{ opacity: startedShiny ? 1 : 0 }}
           />
         )}

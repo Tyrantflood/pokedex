@@ -19,7 +19,7 @@ const TIMEOUT_MS = 20_000;
 const DISK_CACHE = path.join(process.cwd(), ".cache", "pokedex.json");
 const DISK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // Bump when the shape or normalisation changes so stale files are ignored.
-const DISK_VERSION = 3;
+const DISK_VERSION = 4;
 
 export class PokeApiError extends Error {
   constructor(
@@ -95,6 +95,7 @@ interface RawPokemon {
     front_shiny: string | null;
     other?: {
       "official-artwork"?: { front_default: string | null; front_shiny: string | null };
+      showdown?: { front_default: string | null; front_shiny: string | null };
     };
   };
 }
@@ -142,6 +143,7 @@ function normalizeStats(raw: RawPokemon["stats"]): PokemonStats {
 
 function normalize(raw: RawPokemon): Pokemon {
   const art = raw.sprites.other?.["official-artwork"];
+  const animated = raw.sprites.other?.showdown;
   return {
     id: raw.id,
     number: speciesNumber(raw.species.url),
@@ -152,6 +154,7 @@ function normalize(raw: RawPokemon): Pokemon {
     types: [...raw.types].sort((a, b) => a.slot - b.slot).map((t) => t.type.name as PokemonType),
     sprites: { normal: raw.sprites.front_default, shiny: raw.sprites.front_shiny },
     artwork: { normal: art?.front_default ?? null, shiny: art?.front_shiny ?? null },
+    animated: { normal: animated?.front_default ?? null, shiny: animated?.front_shiny ?? null },
     stats: normalizeStats(raw.stats),
     abilities: [...raw.abilities]
       .sort((a, b) => a.slot - b.slot)

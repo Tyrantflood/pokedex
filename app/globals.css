@@ -798,3 +798,22 @@ body.is-card-dragging * {
 .drag-hint.is-shown {
   opacity: 1;
 }
+
+/* Gentle idle bob for static sprites standing in for a missing animation. */
+.art-bob {
+  animation: art-bob 2.6s ease-in-out infinite;
+}
+@keyframes art-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .art-bob {
+    animation: none;
+  }
+}

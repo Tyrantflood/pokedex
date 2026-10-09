@@ -124,6 +124,14 @@ The Vercel layout is assumed from the Build Output API, not observed.
 
 - **Drag hint** (`use-drag-hint.ts`): after 0.5 s resting a mouse/pen on a card, one DOM label says how to drag-compare. Never for touch, during a drag/comparison/detail view, or once a *drag* compare completed (`sessionStorage` `pokedex:drag-compared`; the Compare button does not count).
 
+### Artwork / Animated toggle (`app/pokedex/art.ts`, `lib/first-frame.ts`)
+- Animated = PokéAPI Showdown GIFs (`sprites.other.showdown`; all 2,566 listed URLs resolve), pixelated and scaled to the slot. 68 forms have none
+  (Megas etc.): they get the static pixel sprite with a CSS idle bob (`.art-bob`, phase-aligned to the wall clock so layers stay in sync). A GIF that
+  fails to decode is added to `broken` and falls back the same way. `DISK_VERSION` is 4 because the cached shape gained `animated`.
+- The choice is remembered in `sessionStorage` `pokedex:detail-mode`. Changing it replays only the scan, not the readouts (separate art clock).
+- Silhouettes (scan and evolution) and reduced motion use the first frame of the GIF (canvas to blob URL, cached), so no filter ever runs on an
+  animated image and reduced motion truly pauses. Comparison mode always uses static artwork.
+
 ### Other settled choices
 - **Night mode:** a static tinted `.night-veil` layer faded by opacity (midnight to 6:00 local). A CSS `filter`
   on the page would break `position:fixed` overlays and cost frames. `data-night` is set pre-paint by an inline

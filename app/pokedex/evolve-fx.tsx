@@ -3,11 +3,7 @@
 import { motion, useAnimate } from "framer-motion";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-/** One image drawn in the sprite slot. */
-export interface ArtImage {
-  src: string;
-  pixelated: boolean;
-}
+import type { StillImage } from "./art";
 
 /** Length of each pulse of the evolution glow, in seconds: every one is shorter than the last. */
 const PULSES_S = [0.5, 0.38, 0.29, 0.22, 0.17, 0.13, 0.1];
@@ -35,8 +31,8 @@ export function EvolveFx({
   onSwap,
   onDone,
 }: {
-  from: ArtImage;
-  to: ArtImage;
+  from: StillImage;
+  to: StillImage;
   color: string;
   /** Called at the peak of the flash: switch the view to the new Pokémon now. */
   onSwap: () => void;

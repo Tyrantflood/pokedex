@@ -63,6 +63,8 @@ export interface Pokemon {
   sprites: PokemonSpritePair;
   /** Official artwork; fallback when a form has no pixel sprite. */
   artwork: PokemonSpritePair;
+  /** Animated (GIF) Showdown sprites; null where PokéAPI has none. */
+  animated: PokemonSpritePair;
   stats: PokemonStats;
   abilities: PokemonAbility[];
   /** Height in decimetres (PokéAPI units). */
