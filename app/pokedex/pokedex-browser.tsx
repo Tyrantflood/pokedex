@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, MotionConfig } from "framer-motion";
+import type { CardRects } from "./card-rects";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { PokemonSummary } from "@/lib/summary";
@@ -36,7 +37,7 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
   const [animateExit, setAnimateExit] = useState(false);
   const [introDone, setIntroDone] = useState(false);
   const [layout, setLayout] = useState({ width: 0, margin: 0 });
-  const [selected, setSelected] = useState<PokemonSummary | null>(null);
+  const [selected, setSelected] = useState<{ pokemon: PokemonSummary; origin: CardRects } | null>(null);
   const [rowRange, setRowRange] = useState({ first: 0, last: 6 });
 
   const listRef = useRef<HTMLDivElement>(null);
@@ -103,6 +104,7 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
     }
   }, []);
 
+  const openDetail = useCallback((pokemon: PokemonSummary, origin: CardRects) => setSelected({ pokemon, origin }), []);
   const closeDetail = useCallback(() => setSelected(null), []);
 
   const changeQuery = (q: string) => {
@@ -199,7 +201,7 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
                 height={CARD_HEIGHT}
                 delay={introDone ? 0 : Math.min(index, STAGGER_MAX_CARDS) * STAGGER_STEP_S}
                 animateIn={!introDone || animateExit}
-                onOpen={setSelected}
+                onOpen={openDetail}
               />
             );
           })}
@@ -214,9 +216,9 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
           </button>
         </div>
       )}
-      <AnimatePresence>
-        {selected && <DetailView key={selected.id} pokemon={selected} onClose={closeDetail} />}
-      </AnimatePresence>
+      {selected && (
+        <DetailView key={selected.pokemon.id} pokemon={selected.pokemon} origin={selected.origin} onClosed={closeDetail} />
+      )}
     </MotionConfig>
   );
 }

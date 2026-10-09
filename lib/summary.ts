@@ -1,4 +1,4 @@
-import type { Pokemon, PokemonType } from "./pokemon-types";
+import type { Pokemon, PokemonAbility, PokemonStats, PokemonType } from "./pokemon-types";
 import { generationOf } from "./generations";
 import { PLACEHOLDER_SPRITE } from "./sprites";
 
@@ -7,6 +7,8 @@ export interface PokemonSummary {
   id: number;
   number: number;
   name: string;
+  /** Species name, used to look up the evolution chain. */
+  species: string;
   /** "Mega", "G-Max" or a region name for notable forms; null otherwise. */
   tag: string | null;
   types: PokemonType[];
@@ -17,6 +19,11 @@ export interface PokemonSummary {
   /** Official artwork for the detail view (null if the form has none). */
   artwork: string | null;
   generation: number;
+  stats: PokemonStats;
+  abilities: PokemonAbility[];
+  /** Decimetres / hectograms, as PokéAPI reports them. */
+  height: number;
+  weight: number;
 }
 
 function formTag(p: Pokemon): string | null {
@@ -37,11 +44,16 @@ export function toSummary(p: Pokemon): PokemonSummary {
     id: p.id,
     number: p.number,
     name: p.name,
+    species: p.species,
     tag: formTag(p),
     types: p.types,
     sprite: p.sprites.normal ?? p.artwork.normal ?? PLACEHOLDER_SPRITE,
     pixel: p.sprites.normal !== null,
     artwork: p.artwork.normal,
     generation: generationOf(p.number),
+    stats: p.stats,
+    abilities: p.abilities,
+    height: p.height,
+    weight: p.weight,
   };
 }

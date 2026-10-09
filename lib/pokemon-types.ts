@@ -65,5 +65,9 @@ export interface Pokemon {
   artwork: PokemonSpritePair;
   stats: PokemonStats;
   abilities: PokemonAbility[];
+  /** Height in decimetres (PokéAPI units). */
+  height: number;
+  /** Weight in hectograms (PokéAPI units). */
+  weight: number;
   cries: { latest: string | null; legacy: string | null };
 }

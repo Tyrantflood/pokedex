@@ -5,6 +5,7 @@ import { memo, useRef, type PointerEvent } from "react";
 import type { PokemonSummary } from "@/lib/summary";
 import { preloadImage } from "@/lib/preload-image";
 import { TYPE_COLORS } from "@/lib/type-colors";
+import { measureCardElement, type CardRects } from "./card-rects";
 
 const MAX_TILT_DEG = 14;
 const SPRING = { type: "spring", stiffness: 260, damping: 30 } as const;
@@ -33,7 +34,7 @@ interface Props {
    * mounting cheap during fast scrolling.
    */
   animateIn: boolean;
-  onOpen: (p: PokemonSummary) => void;
+  onOpen: (p: PokemonSummary, origin: CardRects) => void;
 }
 
 function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, onOpen }: Props) {
@@ -76,10 +77,28 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, on
     innerRef.current?.style.removeProperty("--ry");
   };
 
+  // Flatten the hover tilt before measuring so the detail view starts from the card's
+  // true on-screen rectangle, then hand over to the detail view.
+  const open = () => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return;
+    cancelAnimationFrame(frame.current);
+    delete outer.dataset.hover;
+    inner.style.transition = "none";
+    inner.style.removeProperty("--rx");
+    inner.style.removeProperty("--ry");
+    inner.getBoundingClientRect(); // force the flattened style to apply
+    const rects = measureCardElement(outer);
+    inner.style.transition = "";
+    if (rects) onOpen(p, rects);
+  };
+
   return (
     <motion.div
       ref={outerRef}
       role="listitem"
+      data-card-id={p.id}
       className="holo-card absolute left-0 top-0"
       style={{ width, height, ["--type" as string]: color }}
       // Position is part of initial, so a card fades in place instead of flying in;
@@ -138,7 +157,7 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, on
         <button
           type="button"
           aria-label={`View ${p.name.replace(/-/g, " ")}`}
-          onClick={() => onOpen(p)}
+          onClick={open}
           onFocus={() => preloadImage(p.artwork)}
           className="absolute inset-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
         />

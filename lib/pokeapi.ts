@@ -9,7 +9,7 @@ import type {
   PokemonType,
 } from "./pokemon-types";
 
-const API = "https://pokeapi.co/api/v2";
+export const API = "https://pokeapi.co/api/v2";
 const CONCURRENCY = 16;
 const RETRIES = 3;
 const TIMEOUT_MS = 20_000;
@@ -19,7 +19,7 @@ const TIMEOUT_MS = 20_000;
 const DISK_CACHE = path.join(process.cwd(), ".cache", "pokedex.json");
 const DISK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // Bump when the shape or normalisation changes so stale files are ignored.
-const DISK_VERSION = 2;
+const DISK_VERSION = 3;
 
 export class PokeApiError extends Error {
   constructor(
@@ -33,7 +33,7 @@ export class PokeApiError extends Error {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function getJson<T>(url: string): Promise<T> {
+export async function getJson<T>(url: string): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await sleep(500 * 2 ** (attempt - 1));
@@ -83,6 +83,8 @@ interface RawPokemon {
   id: number;
   name: string;
   is_default: boolean;
+  height: number;
+  weight: number;
   species: { name: string; url: string };
   types: { slot: number; type: { name: string } }[];
   stats: { base_stat: number; stat: { name: string } }[];
@@ -154,6 +156,8 @@ function normalize(raw: RawPokemon): Pokemon {
     abilities: [...raw.abilities]
       .sort((a, b) => a.slot - b.slot)
       .map((a) => ({ name: a.ability.name, hidden: a.is_hidden })),
+    height: raw.height,
+    weight: raw.weight,
     cries: { latest: raw.cries?.latest ?? null, legacy: raw.cries?.legacy ?? null },
   };
 }
