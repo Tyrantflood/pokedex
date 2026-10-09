@@ -650,3 +650,26 @@ html {
     animation: none !important;
   }
 }
+
+/* ---- Night mode ----
+   After midnight (until 6am local) a cool, dark tint sits over the whole UI like a phone's night
+   mode. It is one static layer faded by opacity alone: unlike a CSS filter on the page it does
+   not break position:fixed descendants and costs no raster time. app/night-mode.tsx flips
+   <html data-night> when the clock crosses the boundary; the transition does the rest. */
+.night-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: rgba(10, 26, 78, 0.24);
+  opacity: 0;
+  transition: opacity 6s ease-in-out;
+}
+html[data-night="1"] .night-veil {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .night-veil {
+    transition: none;
+  }
+}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { NightMode } from "./night-mode";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -21,6 +22,10 @@ export const metadata: Metadata = {
 // Skipped for reduced-motion users and when storage is unavailable.
 const BOOT_SCRIPT = `try{if(!sessionStorage.getItem("pokedex:booted")&&!matchMedia("(prefers-reduced-motion: reduce)").matches)document.documentElement.dataset.boot="play"}catch(e){}`;
 
+// Night mode (midnight to 6am, local time). Set before first paint so there is no flash; night-mode.tsx
+// then keeps it in step with the clock while the page is open.
+const NIGHT_SCRIPT = `try{document.documentElement.dataset.night=new Date().getHours()<6?"1":"0"}catch(e){}`;
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
@@ -30,8 +35,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: BOOT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: NIGHT_SCRIPT }} />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">{children}
+        <div className="night-veil" aria-hidden />
+        <NightMode />
+      </body>
     </html>
   );
 }
