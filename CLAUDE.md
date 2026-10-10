@@ -14,7 +14,7 @@ promises.
 - `npm run build` runs `prebuild` first (`scripts/build-location-names.mjs`, see "Where to find": a no-op unless the name table is over 30 days old) and
   `scripts/check-built-css.mjs` afterwards (see "Build check").
 - `npm test`: Node's built-in runner over `tests/**/*.test.ts` (TypeScript stripped by Node; `tests/resolver.mjs` handles extensionless and `@/` imports).
-  No network, about 2 s, 49 tests (type chart, type calculator, scale maths, radar, verdict, misspell, preload cache, encounters, location names and table, the name-table build script).
+  No network, about 2 s, 73 tests (type chart, team builder, type calculator, scale maths, radar, verdict, misspell, preload cache, encounters, location names and table, the name-table build script).
   To add a test, put a `*.test.ts` in `tests/` and import from `../lib/...` (only modules without `next/*` imports are importable).
 - `npm run snapshot` (`scripts/snapshot-pokeapi.mjs`, ~10 s) re-saves `tests/fixtures/pokeapi-types.json` (all 18 types' damage relations) and `pokemon-slim.json`
   (id, name, types, stats, height of all 1,351 Pokémon and forms). Tests read these instead of the live API; refresh only on purpose and review the diff.
@@ -172,6 +172,28 @@ The Vercel layout is assumed from the Build Output API, not observed.
 - Tested (`tests/type-chart.test.ts`): a 4x weakness (Dragonite/ice, Charizard/rock), a dual-type cancel-out (Volcanion vs water and grass), an immunity overriding a weakness
   (Gligar, Skarmory), a regional form with different types (Vulpix and Sandshrew vs their Alolan forms), every one of the 171 single/dual typings against the chart, and all
   1,351 snapshot Pokémon. The 324-pair chart check now runs against the saved PokéAPI snapshot. Browser: the chips matched the chart for 14 Pokémon.
+
+### Team builder (`lib/team.ts`, `app/pokedex/team-dock.tsx`, `use-team.ts`, `use-card-drag.ts`)
+- **Storage shape** (localStorage `pokedex:team`): `{ "version": 1, "slots": [ { "pokemonId": 6 } | null, ... six ... ] }`. Members are *objects*, not bare ids, and every
+  operation (`addMember`, `removeMember`, parse/serialise) moves whole members, so the battle team builder's moves, item, ability, nature, EVs and IVs can be added to
+  `TeamMember` later without touching how a team is stored, dropped, or analysed; `parseTeam` is where an older `version` gets migrated. Those fields are deliberately **not** built.
+  The id is the PokéAPI form id, so a regional form is its own member. The same Pokémon can't be on the team twice (species clause); a full team refuses a seventh with a message.
+- `parseTeam` never throws: garbage, another version, bad/unknown/duplicate ids and extra slots are dropped or padded, so a damaged save cannot stop the app. The team starts empty
+  on the server and first client render and loads right after mount (no hydration mismatch); a load does not animate; storage that is blocked just means the team isn't remembered;
+  a second tab follows through the `storage` event.
+- **Adding:** mouse/pen drag a card onto a slot (that slot, replacing its occupant) or onto the bar (first free slot); `use-card-drag.ts` resolves the topmost of slot / bar / card
+  under the pointer and reports a `DropTarget` plus where the dragged sprite was let go. Touch and keyboard: the card's own +/✓ button (always visible when `hover: none`).
+  The sprite then **flies from where it was let go (or from the card's sprite) into its slot** with a spring, and the slot pulses; reduced motion: it just appears.
+  Clicking a filled slot opens its detail view.
+- **Analysis** (`analyseTeam`, pure): each member's multiplier against each of the 18 types with the same chart as everywhere (`effectiveness`, so dual types and immunities are right).
+  Per type it counts members weak / resisting / immune. **Flagged** = every member weak, and only with two or more members (one Pokémon is not "the whole team").
+  **Gaps** = somebody weak and *nobody* resists or is immune (an immunity is an answer); flagged types are gaps too.
+- **Suggestions** (`suggestCoverage`, pure): over one default form per species, not already on the team (or the same species). Score: each gap counts once per member weak to it (double
+  when the whole team is); +1 for a resistance, +1.25 for a double resistance, +1.5 for an immunity; −0.75 per gap the candidate is itself weak to; a small penalty for piling a second
+  weakness onto a type the team is already weak to; base-stat total/1000 only as a tie-break. Nothing is suggested that covers no gap. With a full team the panel says so instead.
+- Layout: the bar is fixed at the bottom (z 35, below detail/comparison at 40); the compare tray moves up (`bottom-28`) and the page keeps 7 rem of room under the last row.
+- Verified: the browser panel's chips equal `analyseTeam`'s output for a rock-weak team, and adding the top suggestion cleared the flag. Tests are in `tests/team.test.ts`;
+  11 deliberate breakages (flag rule, gap rule, immunity as answer, duplicates, full team, load validation, version check, suggestion exclusion, cover requirement, weakness penalty) are all caught.
 
 ### Where to find (`where-to-find.tsx`, `lib/encounter-*.ts`, `lib/games.ts`)
 - Loaded on demand per Pokémon (server action `loadEncounters(id)`, cached for days; one request per Pokémon per page load, failures not kept so Retry works).

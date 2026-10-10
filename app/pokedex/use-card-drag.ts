@@ -8,18 +8,22 @@ const titleCase = (name: string) => name.replace(/-/g, " ").replace(/\b\w/g, (c)
 const EDGE_ZONE_PX = 90;
 const MAX_SCROLL_PX_PER_FRAME = 28;
 
+/** What a card was dropped on: another card (compare), one slot of the team, or the team bar itself (first free slot). */
+export type DropTarget = { kind: "card"; pokemon: PokemonSummary } | { kind: "slot"; slot: number } | { kind: "dock" };
+
 interface Options {
   /** The element that contains the cards; events are delegated from it. */
   listRef: RefObject<HTMLElement | null>;
   lookup: (id: number) => PokemonSummary | undefined;
-  onDrop: (source: PokemonSummary, target: PokemonSummary) => void;
+  /** `ghostRect` is where the dragged sprite was when it was let go, for animating it into place. */
+  onDrop: (source: PokemonSummary, target: DropTarget, ghostRect: DOMRect | null) => void;
   /** Height of the sticky header, so edge auto-scroll treats it as part of the top edge. */
   topInset: () => number;
 }
 
 /**
- * Mouse/pen drag from one card onto another (touch uses the Compare button instead, because
- * dragging on a touch screen is how you scroll). Built on pointer events rather than HTML5
+ * Mouse/pen drag from one card onto another card (to compare) or into the team bar (to add to the team). Touch uses
+ * the Compare and "Add to team" buttons instead, because dragging on a touch screen is how you scroll. Built on pointer events rather than HTML5
  * drag-and-drop so it works with the cards' own pointer handling, and so the grid can
  * auto-scroll when you drag near its top or bottom edge, which you need in a 1,351-card list.
  *
@@ -57,12 +61,21 @@ export function useCardDrag({ listRef, lookup, onDrop, topInset }: Options) {
         hovered?.removeAttribute("data-drop");
         hovered = next;
         next?.setAttribute("data-drop", "true");
-        const t = next && latest.current.lookup(Number(next.dataset.cardId));
-        if (ghostLabel) ghostLabel.textContent = t ? `Compare with ${titleCase(t.name)}` : "Drop on another card to compare";
+        const t = next && next.dataset.cardId !== undefined ? latest.current.lookup(Number(next.dataset.cardId)) : undefined;
+        if (ghostLabel) {
+          if (next?.dataset.teamSlot !== undefined) ghostLabel.textContent = `Add to team, slot ${Number(next.dataset.teamSlot) + 1}`;
+          else if (next?.dataset.teamDock !== undefined) ghostLabel.textContent = "Add to team";
+          else ghostLabel.textContent = t ? `Compare with ${titleCase(t.name)}` : "Drop on a card to compare, or in your team";
+        }
       };
 
       const findTarget = () => {
         for (const el of document.elementsFromPoint(x, y)) {
+          // A team slot, else the rest of the team bar, else another card: whatever is topmost under the pointer.
+          const slot = el.closest<HTMLElement>("[data-team-slot]");
+          if (slot) return slot;
+          const dock = el.closest<HTMLElement>("[data-team-dock]");
+          if (dock) return dock;
           const card = el.closest<HTMLElement>("[data-card-id]");
           if (card && card !== sourceEl) return card;
         }
@@ -127,7 +140,17 @@ export function useCardDrag({ listRef, lookup, onDrop, topInset }: Options) {
         refresh();
       }
       function onUp() {
-        const dropOn = dragging && hovered ? latest.current.lookup(Number(hovered.dataset.cardId)) : undefined;
+        let dropOn: DropTarget | undefined;
+        if (dragging && hovered) {
+          if (hovered.dataset.teamSlot !== undefined) dropOn = { kind: "slot", slot: Number(hovered.dataset.teamSlot) };
+          else if (hovered.dataset.teamDock !== undefined) dropOn = { kind: "dock" };
+          else {
+            const pokemon = latest.current.lookup(Number(hovered.dataset.cardId));
+            if (pokemon) dropOn = { kind: "card", pokemon };
+          }
+        }
+        // Where the dragged sprite is right now, before the ghost goes away.
+        const ghostRect = ghost?.querySelector("img")?.getBoundingClientRect() ?? null;
         const wasDragging = dragging;
         cleanup();
         if (wasDragging) {
@@ -135,7 +158,7 @@ export function useCardDrag({ listRef, lookup, onDrop, topInset }: Options) {
           suppressClick = true;
           setTimeout(() => (suppressClick = false), 60);
         }
-        if (dropOn) latest.current.onDrop(source!, dropOn);
+        if (dropOn) latest.current.onDrop(source!, dropOn, ghostRect);
       }
       function onCancel() {
         cleanup();

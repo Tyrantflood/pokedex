@@ -39,9 +39,13 @@ interface Props {
   onCompare: (p: PokemonSummary) => void;
   /** This card is the first half of a comparison that is waiting for a second pick. */
   picked: boolean;
+  /** This Pokémon is on the team. */
+  onTeam: boolean;
+  /** Adds it to the team, or takes it off if it is already there. `sprite` is its sprite on screen, for the flight into the team bar. */
+  onToggleTeam: (p: PokemonSummary, sprite: DOMRect | null) => void;
 }
 
-function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, onOpen, onCompare, picked }: Props) {
+function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, onOpen, onCompare, picked, onTeam, onToggleTeam }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const frame = useRef(0);
@@ -174,6 +178,17 @@ function PokemonCardImpl({ pokemon: p, x, y, width, height, delay, animateIn, on
           onClick={() => onCompare(p)}
         >
           ⇄
+        </button>
+        {/* Team: dragging a card into the team bar works with a mouse; this button is for touch and keyboard. */}
+        <button
+          type="button"
+          className="team-btn"
+          aria-label={onTeam ? `Remove ${p.name.replace(/-/g, " ")} from the team` : `Add ${p.name.replace(/-/g, " ")} to the team`}
+          aria-pressed={onTeam}
+          title={onTeam ? "On your team: press to remove" : "Add to team"}
+          onClick={() => onToggleTeam(p, outerRef.current ? (measureCardElement(outerRef.current)?.sprite ?? null) : null)}
+        >
+          {onTeam ? "✓" : "+"}
         </button>
       </div>
     </motion.div>

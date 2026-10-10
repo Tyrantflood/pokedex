@@ -5,13 +5,16 @@ import type { CardRects } from "./card-rects";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { PokemonSummary } from "@/lib/summary";
+import { addMember, emptyTeam, removeMember, slotOf, teamMembers, type Candidate } from "@/lib/team";
 import { CompareTray } from "./compare-tray";
 import { CompareView } from "./compare-view";
 import { Controls } from "./controls";
 import { DetailView } from "./detail-view";
 import { PokemonCard } from "./pokemon-card";
-import { useCardDrag } from "./use-card-drag";
+import { useCardDrag, type DropTarget } from "./use-card-drag";
 import { markDragCompared, useDragHint } from "./use-drag-hint";
+import { SLOT_SPRITE_PX, TeamDock, type Flight } from "./team-dock";
+import { useTeam } from "./use-team";
 
 const GAP = 16;
 const MIN_CARD_WIDTH = 172;
@@ -33,6 +36,8 @@ function subscribeBoot(notify: () => void) {
 }
 const bootFinished = () => !document.documentElement.dataset.boot;
 const bootFinishedOnServer = () => false;
+
+const lookupKnown = (byId: Map<number, PokemonSummary>) => (id: number) => byId.has(id);
 
 export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
   const [query, setQuery] = useState("");
@@ -143,15 +148,83 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
 
   const byId = useMemo(() => new Map(pokemon.map((p) => [p.id, p])), [pokemon]);
   const lookup = useCallback((id: number) => byId.get(id), [byId]);
-  const dropCompare = useCallback(
-    (a: PokemonSummary, b: PokemonSummary) => {
-      markDragCompared();
-      openComparison(a, b);
+
+  // ---- Team ----
+  const { team, setTeam, loaded: teamLoaded } = useTeam(lookupKnown(byId));
+  const teamRef = useRef(team);
+  useEffect(() => {
+    teamRef.current = team;
+  });
+  const [flight, setFlight] = useState<Flight | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef(0);
+  const flightCount = useRef(0);
+  useEffect(() => () => clearTimeout(noticeTimer.current), []);
+
+  const flash = useCallback((message: string) => {
+    setNotice(message);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 3500);
+  }, []);
+
+  // Puts a Pokémon on the team (in `slot`, or the first free one) and sends it flying there from `origin`, wherever it was let go.
+  const addToTeam = useCallback(
+    (p: PokemonSummary, slot: number | undefined, origin: DOMRect | null) => {
+      const result = addMember(teamRef.current, { pokemonId: p.id }, slot);
+      if (!result.ok) {
+        const name = p.name.replace(/-/g, " ");
+        flash(result.reason === "full" ? "Your team is full. Remove someone first." : result.reason === "duplicate" ? `${name} is already on your team.` : "That slot doesn't exist.");
+        return;
+      }
+      setTeam(result.team);
+      const slotEl = document.querySelector<HTMLElement>(`[data-team-slot="${result.slot}"]`);
+      if (origin && slotEl) {
+        const to = slotEl.getBoundingClientRect();
+        setFlight({
+          slot: result.slot,
+          token: ++flightCount.current,
+          x: origin.left + origin.width / 2 - (to.left + to.width / 2),
+          y: origin.top + origin.height / 2 - (to.top + to.height / 2),
+          scale: Math.min(5, Math.max(0.4, origin.width / SLOT_SPRITE_PX)),
+        });
+      } else setFlight(null);
     },
-    [openComparison],
+    [setTeam, flash],
+  );
+  const toggleTeam = useCallback(
+    (p: PokemonSummary, sprite: DOMRect | null) => {
+      const slot = slotOf(teamRef.current, p.id);
+      if (slot !== -1) setTeam(removeMember(teamRef.current, slot));
+      else addToTeam(p, undefined, sprite);
+    },
+    [setTeam, addToTeam],
+  );
+  const removeFromTeam = useCallback((slot: number) => setTeam(removeMember(teamRef.current, slot)), [setTeam]);
+  const clearTeam = useCallback(() => {
+    setFlight(null);
+    setTeam(emptyTeam());
+  }, [setTeam]);
+  const teamIds = useMemo(() => new Set(teamMembers(team).map((m) => m.pokemonId)), [team]);
+  // Who can be suggested: one entry per species (its default form), so Megas and other forms don't crowd the list.
+  const candidates = useMemo<Candidate[]>(
+    () =>
+      pokemon
+        .filter((p) => p.base)
+        .map((p) => ({ id: p.id, species: p.species, name: p.name, types: p.types, total: p.stats.hp + p.stats.attack + p.stats.defense + p.stats.specialAttack + p.stats.specialDefense + p.stats.speed })),
+    [pokemon],
+  );
+
+  const handleDrop = useCallback(
+    (source: PokemonSummary, target: DropTarget, ghostRect: DOMRect | null) => {
+      if (target.kind === "card") {
+        markDragCompared();
+        openComparison(source, target.pokemon);
+      } else addToTeam(source, target.kind === "slot" ? target.slot : undefined, ghostRect);
+    },
+    [openComparison, addToTeam],
   );
   useDragHint(listRef);
-  useCardDrag({ listRef, lookup, onDrop: dropCompare, topInset: () => controlsRef.current?.offsetHeight ?? 0 });
+  useCardDrag({ listRef, lookup, onDrop: handleDrop, topInset: () => controlsRef.current?.offsetHeight ?? 0 });
 
   useEffect(() => {
     if (!pending) return;
@@ -258,6 +331,8 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
                 onOpen={openDetail}
                 onCompare={startCompare}
                 picked={pending?.id === p.id}
+                onTeam={teamIds.has(p.id)}
+                onToggleTeam={toggleTeam}
               />
             );
           })}
@@ -272,6 +347,20 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
           </button>
         </div>
       )}
+      {/* Room under the last row for the team bar. */}
+      <div aria-hidden className="h-28" />
+      <TeamDock
+        team={team}
+        loaded={teamLoaded}
+        byId={byId}
+        candidates={candidates}
+        flight={flight}
+        notice={notice}
+        onRemove={removeFromTeam}
+        onClear={clearTeam}
+        onAdd={(p, origin) => addToTeam(p, undefined, origin)}
+        onOpen={openDetail}
+      />
       {selected && (
         <DetailView
           key={selected.pokemon.id}

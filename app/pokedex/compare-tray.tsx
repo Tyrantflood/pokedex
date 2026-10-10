@@ -7,7 +7,7 @@ import type { PokemonSummary } from "@/lib/summary";
 export function CompareTray({ first, onCancel }: { first: PokemonSummary; onCancel: () => void }) {
   const name = first.name.replace(/-/g, " ");
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-28 z-40 flex justify-center px-4">
       <motion.div
         role="status"
         aria-live="polite"

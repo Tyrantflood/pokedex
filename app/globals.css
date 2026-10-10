@@ -817,3 +817,105 @@ body.is-card-dragging * {
     animation: none;
   }
 }
+
+/* "Add to team" button on each card: under the compare button; hover/focus on mouse devices, always on touch. */
+.team-btn {
+  position: absolute;
+  top: 40px;
+  right: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: rgba(10, 14, 19, 0.78);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.team-btn:hover {
+  background: rgba(45, 212, 191, 0.5);
+}
+.holo-card:hover .team-btn,
+.team-btn:focus-visible,
+.team-btn[aria-pressed="true"] {
+  opacity: 1;
+}
+.team-btn:focus-visible {
+  outline: 2px solid #5eead4;
+  outline-offset: 2px;
+}
+.team-btn[aria-pressed="true"] {
+  background: #2dd4bf;
+  color: #04201c;
+}
+@media (hover: none) {
+  .team-btn {
+    opacity: 1;
+    top: 46px;
+    width: 34px;
+    height: 34px;
+    font-size: 20px;
+  }
+}
+
+/* The team bar: slots light up as a card is dragged over them. */
+.team-slot {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.22);
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.team-slot:has([data-team-sprite]) {
+  border-style: solid;
+}
+body.is-card-dragging .team-bar {
+  border-color: rgba(94, 234, 212, 0.55);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55), 0 0 24px rgba(45, 212, 191, 0.25);
+}
+.team-slot[data-drop="true"] {
+  transform: scale(1.14);
+  border-style: solid;
+  border-color: #5eead4 !important;
+  box-shadow: 0 0 0 2px rgba(94, 234, 212, 0.55), 0 0 18px rgba(45, 212, 191, 0.6);
+}
+.team-bar[data-drop="true"] {
+  border-color: #5eead4;
+}
+.team-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(10, 14, 19, 0.95);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.team-slot:hover .team-remove,
+.team-remove:focus-visible {
+  opacity: 1;
+}
+.team-remove:focus-visible {
+  outline: 2px solid #5eead4;
+  outline-offset: 1px;
+}
+@media (hover: none) {
+  .team-remove {
+    opacity: 1;
+    width: 20px;
+    height: 20px;
+  }
+}
