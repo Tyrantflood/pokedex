@@ -11,7 +11,10 @@ promises.
 ## Commands
 
 - `npm run dev` / `npm run build` / `npm run start` (`npx next start -H 0.0.0.0 -p 3000` to reach it from a phone).
-- `npm run build` runs `scripts/check-built-css.mjs` afterwards (see "Build check").
+- `npm run build` runs `prebuild` first (`scripts/build-location-names.mjs`, see "Where to find": a no-op unless the name table is over 30 days old) and
+  `scripts/check-built-css.mjs` afterwards (see "Build check").
+- `npm test`: Node's built-in runner over `tests/**/*.test.ts` (TypeScript stripped by Node; `tests/resolver.mjs` handles extensionless and `@/` imports).
+  No network, about 1 s. To add a test, put a `*.test.ts` in `tests/` and import from `../lib/...` (only modules without `next/*` imports are importable).
 - Lint: `npx eslint app lib scripts`; types: `npx tsc --noEmit`. Both are clean; keep them so.
 - Judge performance on the **production** build. Dev mode (React dev instrumentation) is several times slower and misleading.
 
@@ -25,7 +28,9 @@ promises.
 - `app/pokedex/compare-view.tsx`, `scale-stage.tsx`, `stat-radar.tsx`, `matchups.tsx`, `use-card-drag.ts`, `use-modal.ts`.
 - `lib/cry-audio.ts`, `lib/type-chart.ts`, `lib/compare-scale.ts`, `lib/radar.ts`, `lib/verdict.ts`, `lib/sprite-bounds.ts`, `lib/preload-image.ts`.
 - `app/boot-intro.tsx`, `app/night-mode.tsx`, `app/layout.tsx` (inline scripts), `app/icon.tsx` / `apple-icon.tsx` / `opengraph-image.tsx` / `twitter-image.tsx`, `lib/brand.tsx`, `lib/og-image.tsx`.
-- `scripts/`: `check-built-css.mjs`, `build-favicon.mjs`, `generate-caustic.mjs`.
+- `scripts/`: `check-built-css.mjs`, `build-favicon.mjs`, `generate-caustic.mjs`, `build-location-names.mjs`.
+- `lib/encounters.ts`, `encounter-data.ts`, `encounter-format.ts`, `location-names.ts`, `location-table.ts`, `location-names.generated.json` (committed), `games.ts`; `app/pokedex/where-to-find.tsx`.
+- `tests/`: the project's test suite (see Commands).
 
 ## Decisions, and why (don't reverse these without re-checking the reason)
 
@@ -159,10 +164,14 @@ The Vercel layout is assumed from the Build Output API, not observed.
 - Honesty rules: a game with no data is worded "No wild encounter data", never "not found". Those lines only cover main-series games from the Pokémon's own
   generation onwards, consecutive ones collapsed into one line; spin-offs, DLC and regional editions only appear when they have data. The Japanese Red/Green/Blue
   editions are hidden when the international games have data (they repeat it). A note always says starters, gifts, trades and newer games are often missing.
-- **Location names come from PokéAPI** (`/location-area/{slug}` and its `/location/{slug}`), cached per slug with `"use cache"` + `cacheLife("max")`; the raw
-  encounter list is cached for days, and the combined result is *not* cached as a whole, so a name lookup that failed (non-404) is retried on the next view instead
-  of freezing the slug fallback in. A 404 is cached as "no such entry". 40 lookups in flight. Measured: first view of Zubat (160 areas, 77 locations) 3.3 s, the
-  same Pokémon again 0.13 s with **0** outbound requests; Golbat then only fetched the 68 areas / 18 locations Zubat hadn't.
+- **Location names come from PokéAPI** (`/location-area/{slug}` and its `/location/{slug}`) and ship **in a table built at build time**:
+  `scripts/build-location-names.mjs` (the `prebuild` step) writes `lib/location-names.generated.json` (1,539 areas, 1,104 locations, 150 KB: per area
+  `[English name or null, location slug]`, per location its English name). The table is **committed** (a fresh clone or deploy needs no network for it) and is only refreshed
+  when older than 30 days, missing, or with `--force`; ~10 s. **It never fails a build**: if PokéAPI is unreachable or the fetch is incomplete (over 2% failed) it keeps the
+  old table, or writes an empty one with a warning. The runtime resolves everything the table knows from memory with **no request**; only an area (or a location) missing from
+  the table is looked up, cached per slug with `"use cache"` + `cacheLife("max")` (404 cached as "no such entry", other failures retried next view, 40 in flight).
+  The raw encounter list is cached for days and the combined result is *not* cached as a whole, for that reason. Measured: first view of Zubat 1.2 s with **0** name
+  requests (was 3.3 s with 237 before the table); with 3 areas and 1 location removed from the table, exactly those 5 areas and 1 location were fetched and the names were identical.
   - **The two English names disagree, so the resolver combines them**: the *location's* name is the one the games use ("Route 120", "Mt. Moon", "Pokémon Tower");
     the *area's* is more specific but often spelled differently ("Road 120", "Mount Moon (1F)", "Pokemon Tower (7F)", and "Relic Tunnel" where the location says
     "Relic Passage"). Rule: location spelling for the place + what the area adds ("Mt. Moon (1F)", "Route 2 (South, ...)"). If the area name doesn't start with the
@@ -171,7 +180,7 @@ The Vercel layout is assumed from the Build Output API, not observed.
   - Without an English *area* name (241 of 1,539 areas) it is the location's English name plus the part of the slug after the location's slug ("Route 1 (East)"); with
     no English name at all (7 areas, e.g. `hoenn-pokecenter-area`) the whole slug is formatted. Checked against all 1,539 areas: no empty names, no "()", and the
     only "Road N" left are real Victory Roads. Different regions' routes share names ("Route 12"), which is fine because a game is one region.
-  - Not done: a build-time or on-disk name table. Names live in the server's memory cache, so a cold server (or each serverless instance) pays the first-view cost again.
+  - To refresh by hand: `node scripts/build-location-names.mjs --force`, then commit the JSON. The tests read the shipped table, so a bad refresh fails `npm test`.
 - Top 3 locations per game and top 3 methods per location, then "Show N more"; the first 4 rows, then "Show N more game entries".
 - **Why these choices (Where to find):**
   - *Normalised on the server*, not in the browser: raw encounter JSON is large (Zubat is 160 areas across 30+ games); the browser only gets the grouped, ranked result.
@@ -186,7 +195,8 @@ The Vercel layout is assumed from the Build Output API, not observed.
     and the newest games (Gen 9 Pokémon such as Gholdengo have none at all). Do not change the wording to "not found".
   - *Known limits:* the chance is the slot chance inside that area (not an overall odds figure), it does not know which games a Pokémon is actually in, and
     only wild/static/gift entries PokéAPI has are shown.
-  - *Verified with:* a pure-logic test (names, merge, cap, ordering, row planning, Japan-edition hiding) plus real data for 7 Pokémon, and browser runs for
+  - *Verified with:* `npm test` (names, resolver cases, merge, cap, ordering, row planning, Japan-edition hiding, the shipped table, and the build script against a
+    fake PokéAPI incl. unreachable and half-failed fetches; six deliberate mutations of the code were each caught) plus real data for 7 Pokémon, and browser runs for
     loading (aria-busy skeleton), error plus Retry (request blocked, then allowed), empty (Mega, Gen 9), show-more, refetch when switching evolution stage,
     Esc, and a 390 px viewport with no sideways scroll.
 
@@ -210,8 +220,9 @@ The Vercel layout is assumed from the Build Output API, not observed.
   `Display::DrawAndSwap` per second, with `Emulation.setCPUThrottlingRate` for the main thread.
 - Always sanity-check a measuring harness with a control that *must* fail before trusting a green result.
 - Time-based features (night mode) are tested with Playwright's `page.clock`, crossing the boundary with the page open.
-- Pure logic (type chart, scale math, radar, verdict, misspell) was unit-tested with Node's built-in TypeScript
-  stripping plus a tiny resolver hook for extensionless imports.
+- Pure logic (type chart, scale math, radar, verdict, misspell) was unit-tested in scratch scripts with Node's built-in TypeScript
+  stripping plus a tiny resolver hook; the encounter/location code is covered by the project suite in `tests/` (`npm test`). The older scratch tests were not moved.
+- To prove a test can fail, **mutate the code on purpose** and see `npm test` go red (done for the resolver, table lookup, build script and Japan-edition rule).
 
 ## Environment gotchas (Windows, Git Bash tool)
 
