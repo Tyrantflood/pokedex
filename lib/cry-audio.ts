@@ -7,7 +7,13 @@
  * and a MediaElementSource fed by such an element is muted for analysis (the analyser reads
  * pure silence). fetch() in CORS mode sidesteps that, and a decoded AudioBuffer can be
  * replayed instantly and measured exactly.
+ *
+ * Decoding tries the browser first (OfflineAudioContext.decodeAudioData). Safari can't decode Ogg Vorbis before macOS 15.4 / iOS 18.4
+ * (Apple's release notes say newer versions can; that is not verified on a device here), so when the browser refuses, a WebAssembly
+ * Vorbis decoder (lib/cry-decode.ts, its own lazily loaded chunk) takes over. Open the page with `?cry-decoder=wasm` to force that path.
  */
+
+import { decodeOggVorbis } from "./cry-decode";
 
 export type CryErrorReason = "network" | "decode" | "unsupported";
 
@@ -56,19 +62,48 @@ export function loadCry(url: string): Promise<AudioBuffer> {
       throw new CryError("network", "Couldn't load the cry.");
     }
 
+    let buffer: AudioBuffer;
     try {
-      const buffer = await new OfflineAudioContext(1, 1, DECODE_SAMPLE_RATE).decodeAudioData(bytes);
-      buffers.set(url, buffer);
-      while (buffers.size > MAX_CACHED_BUFFERS) buffers.delete(buffers.keys().next().value!);
-      return buffer;
+      buffer = await decodeCry(bytes);
     } catch {
-      // The files are Ogg Vorbis; some browsers (notably Safari) can't decode that.
       throw new CryError("decode", "This browser can't decode the cry's Ogg Vorbis audio.");
     }
+    buffers.set(url, buffer);
+    while (buffers.size > MAX_CACHED_BUFFERS) buffers.delete(buffers.keys().next().value!);
+    return buffer;
   })().finally(() => inflight.delete(url));
 
   inflight.set(url, request);
   return request;
+}
+
+const forceWasm = () => typeof location !== "undefined" && new URLSearchParams(location.search).get("cry-decoder") === "wasm";
+
+/** An AudioBuffer from raw samples. The constructor is missing in older Safari; a context can make one there. */
+function bufferFrom(channels: Float32Array[], sampleRate: number): AudioBuffer {
+  const length = channels[0].length;
+  let buffer: AudioBuffer;
+  try {
+    buffer = new AudioBuffer({ numberOfChannels: channels.length, length, sampleRate });
+  } catch {
+    buffer = new OfflineAudioContext(channels.length, length, sampleRate).createBuffer(channels.length, length, sampleRate);
+  }
+  channels.forEach((samples, i) => buffer.copyToChannel(samples as Float32Array<ArrayBuffer>, i));
+  return buffer;
+}
+
+/** Native decoding first; WebAssembly only when the browser refuses (or when forced for testing). */
+async function decodeCry(bytes: ArrayBuffer): Promise<AudioBuffer> {
+  if (!forceWasm()) {
+    try {
+      // decodeAudioData takes the bytes away from you (it detaches the buffer), so give it a copy and keep ours for the fallback.
+      return await new OfflineAudioContext(1, 1, DECODE_SAMPLE_RATE).decodeAudioData(bytes.slice(0));
+    } catch {
+      /* the browser can't decode Ogg Vorbis: fall through to the WebAssembly decoder */
+    }
+  }
+  const audio = await decodeOggVorbis(bytes);
+  return bufferFrom(audio.channels, audio.sampleRate);
 }
 
 let context: AudioContext | null = null;

@@ -14,7 +14,7 @@ promises.
 - `npm run build` runs `prebuild` first (`scripts/build-location-names.mjs`, see "Where to find": a no-op unless the name table is over 30 days old) and
   `scripts/check-built-css.mjs` afterwards (see "Build check").
 - `npm test`: Node's built-in runner over `tests/**/*.test.ts` (TypeScript stripped by Node; `tests/resolver.mjs` handles extensionless and `@/` imports).
-  No network, about 2 s, 73 tests (type chart, team builder, type calculator, scale maths, radar, verdict, misspell, preload cache, encounters, location names and table, the name-table build script).
+  No network, about 2 s, 77 tests (type chart, team builder, cry decoder, type calculator, scale maths, radar, verdict, misspell, preload cache, encounters, location names and table, the name-table build script).
   To add a test, put a `*.test.ts` in `tests/` and import from `../lib/...` (only modules without `next/*` imports are importable).
 - `npm run snapshot` (`scripts/snapshot-pokeapi.mjs`, ~10 s) re-saves `tests/fixtures/pokeapi-types.json` (all 18 types' damage relations) and `pokemon-slim.json`
   (id, name, types, stats, height of all 1,351 Pokémon and forms). Tests read these instead of the live API; refresh only on purpose and review the diff.
@@ -29,7 +29,7 @@ promises.
 - `app/pokedex/pokedex-browser.tsx`: the card grid, search/filters, drag-to-compare, comparison state.
 - `app/pokedex/detail-view.tsx` (+ `scan` art, readouts, evolution), `cry-panel.tsx`, `type-fx.tsx`, `flavor-text.tsx`.
 - `app/pokedex/compare-view.tsx`, `scale-stage.tsx`, `stat-radar.tsx`, `matchups.tsx`, `use-card-drag.ts`, `use-modal.ts`.
-- `lib/cry-audio.ts`, `lib/type-chart.ts`, `lib/compare-scale.ts`, `lib/radar.ts`, `lib/verdict.ts`, `lib/sprite-bounds.ts`, `lib/preload-image.ts`.
+- `lib/cry-audio.ts`, `lib/cry-decode.ts`, `lib/type-chart.ts`, `lib/compare-scale.ts`, `lib/radar.ts`, `lib/verdict.ts`, `lib/sprite-bounds.ts`, `lib/preload-image.ts`.
 - `app/boot-intro.tsx`, `app/night-mode.tsx`, `app/layout.tsx` (inline scripts), `app/icon.tsx` / `apple-icon.tsx` / `opengraph-image.tsx` / `twitter-image.tsx`, `lib/brand.tsx`, `lib/og-image.tsx`.
 - `scripts/`: `check-built-css.mjs`, `build-favicon.mjs`, `generate-caustic.mjs`, `build-location-names.mjs`.
 - `lib/encounters.ts`, `encounter-data.ts`, `encounter-format.ts`, `location-names.ts`, `location-table.ts`, `location-names.generated.json` (committed), `games.ts`; `app/pokedex/where-to-find.tsx`.
@@ -64,6 +64,11 @@ real analyser samples (verified: peak equals the file's peak, and every frame co
 real slice of the decoded file). Decoding uses an `OfflineAudioContext` (no user gesture, so cries are warmed
 when the detail view opens); playback creates the `AudioContext` on click. Safari likely can't decode Ogg
 Vorbis; the UI shows an error and draws nothing rather than faking it.
+**Safari fallback:** decoding tries the browser first and only when it refuses falls back to a WebAssembly Vorbis decoder (`lib/cry-decode.ts`, package
+`@wasm-audio-decoders/ogg-vorbis`, MIT, a separate lazy chunk that Chrome/Firefox never download; `?cry-decoder=wasm` forces it). Apple's notes say Safari decodes Ogg Vorbis from
+macOS 15.4 / iOS 18.4; whether `decodeAudioData` accepts it there was **not verified on a device** (no Safari available), so the fallback covers any refusal. The wasm output equals
+Chromium's own decode (same length, peak, loudness, 16 sample points; `tests/cry-decode.test.ts`). `next.config.ts` lists the decoder packages in `serverExternalPackages`:
+without that Turbopack fails the build on the package's Node-only worker import.
 
 ### Effects: transform/opacity only, never SVG filters
 Heat shimmer (`feDisplacementMap`) and caustics (`feTurbulence`) were profiled on a 390x844@3x viewport:
@@ -250,6 +255,33 @@ The Vercel layout is assumed from the Build Output API, not observed.
   `scripts/build-favicon.mjs` from the same renders as `app/icon.tsx`; rerun it after changing the icon design.
 - **Cards use pixel sprites** (`image-rendering: pixelated`); official artwork is only for the detail/compare views.
 
+## Final review (what was found and fixed)
+
+- **Detail panel wider than the screen at 390 px for a few frames.** Cause, found by recording `scrollWidth` and the offending elements every frame: the static *stand-in* sprite
+  (and its silhouette) is scaled up to about x2.3 around its centre by `useFitTransform` so its visible part matches the tight-cropped GIF; its box, invisible padding and all,
+  stuck out of the sprite slot and made the panel's scroller scroll sideways for 10-27 frames (up to 535 px wide). Fixes: `ArtLayer` always renders a wrapper (so the image is never
+  remounted when the stand-in becomes the GIF) that is `overflow-hidden` only when a fit transform is applied, and the scroller is `overflow-x-hidden` as a backstop.
+  Measured per frame on four Pokémon: 0 frames wider than the screen (was 27, 17, 10). Also verified at 320, 360, 390 and 768 px.
+- **Drag hint** now reads "Drag onto a card to compare, or into your team", and a completed drag of either kind stops it for the session.
+- **Reduced motion audit** (two methods, each with a no-preference control that finds hundreds of hits): running CSS animations (`document.getAnimations()`) and inline-style rewrites per
+  element (catches framer-motion's JS animations). Found and fixed: Tailwind `animate-pulse` loading skeletons and the cry button's bars pulsed forever (now `motion-safe:`), hover
+  scale/translate on the cry button and evolution stages (`motion-safe:`), the 120 ms scale on drop highlights, and the team panel's height animation (duration 0). Nothing infinite remains.
+  Tilt is CSS-only and off. Remaining writes are one-shot (each chip once).
+- **Team bar overflowed at 320-360 px** (six fixed 40 px slots): slots now share the width (`flex-1 aspect-square max-w-12`), Clear moves into the panel on narrow screens.
+- **Two team changes in the same tick** could overwrite each other (the second read a stale ref): every change goes through `setTeam`, which updates `teamRef` first.
+- **Sibling keys** (see Type calculator): distinct keys for siblings keyed by Pokémon id.
+- **Dev-console sweep** (every feature on the dev server, all console errors/warnings and failed requests captured): no React warnings, no hydration mismatches.
+- **Clean install:** deleted `node_modules` and `.next`, `npm ci` (63 s), `npm run build` and `npm test` all pass; type-check and lint clean. `npm audit --omit=dev`: 0 vulnerabilities;
+  the 5 "high" are all in the dev-only ESLint chain (braces via fast-glob via eslint-config-next) and need a major upgrade to fix.
+- **Profile** (phone 390x844 at 3x, CPU 4x slower, production build; `perf-all` style harness: trace for compositor fps and raster, in-page rAF recorder for main-thread frames): grid
+  flick-scroll p95 17 ms, 0 slow frames; filters, shiny, stage switch, panel scroll, close, ghost-fx settled, team add/panel/drag, compare: p95 17 ms; raster 0-12 ms/s everywhere.
+  Opening a view and the evolution sequence have p95 33 ms with a few frames of 50-120 ms (evolution tasks are all under 55 ms). Fixed: opening the detail view ran a 315 ms click task
+  (4x), now ~200 ms: the sections below the sprite (type chips, evolution, encounters, cry panel) mount two frames later (`sectionsReady`), and GIF first frames are extracted
+  only for reduced motion (that canvas readback blocked the main thread for 120 ms). **Known, not fixed:** the *first* open of each view per page load is cold, about 4x its
+  warm cost (detail: 57 ms of layout cold vs 5 warm; compare 107-170 ms vs 8) and it is per view, not shared; opening a different Pokémon is warm. Ruled out by experiment: fonts, symbol fallback glyphs, image decoding, text content. A
+  hidden "warm-up" element did not help and was removed. Do not re-add one without measuring.
+- **Safari / WebAssembly decoder:** see Cries.
+
 ## How things were verified (reuse these methods)
 
 - Browser checks use **Playwright installed outside the project** (a scratch directory), not a dependency.
@@ -259,6 +291,8 @@ The Vercel layout is assumed from the Build Output API, not observed.
   for a deliberately heavy filter). Measure with browser tracing instead: sum `RasterTask` duration and count
   `Display::DrawAndSwap` per second, with `Emulation.setCPUThrottlingRate` for the main thread.
 - Always sanity-check a measuring harness with a control that *must* fail before trusting a green result.
+- **Find a long frame's cause from the trace, not by guessing:** list the longest `RunTask`s on `CrRendererMain`, then the children of the big `FunctionCall` (Layout, UpdateLayoutTree, readbacks), and the dirty-object count of each Layout. `EventDispatch <click>` containing one huge `FunctionCall` is React's synchronous render.
+- **Overflow bugs are per frame:** sample `scrollWidth` and the overflowing elements in a rAF loop through the open animation; checking once after it settles misses them.
 - Time-based features (night mode) are tested with Playwright's `page.clock`, crossing the boundary with the page open.
 - Pure logic is unit-tested in the project suite `tests/` (`npm test`; Node's built-in runner and TypeScript stripping plus the resolver hook in `tests/resolver.mjs`), against
   saved PokéAPI snapshots, never the live API.

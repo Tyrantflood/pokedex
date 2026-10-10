@@ -199,13 +199,13 @@ export function CryPanel({ url, color, name, reduceMotion }: Props) {
           onClick={press}
           disabled={!url}
           aria-label={url ? `Play ${name} cry` : `${name} has no cry`}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-black transition-transform enabled:hover:scale-105 enabled:active:scale-95 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-black motion-safe:transition-transform motion-safe:enabled:hover:scale-105 enabled:active:scale-95 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
           style={{ background: color, boxShadow: `0 0 14px ${color}88` }}
         >
           {status === "playing" ? (
             <span className="flex items-end gap-0.5" aria-hidden>
               {[0, 1, 2].map((i) => (
-                <span key={i} className="w-1 animate-pulse rounded-sm bg-black" style={{ height: 8 + ((i * 5) % 8), animationDelay: `${i * 120}ms` }} />
+                <span key={i} className="w-1 motion-safe:animate-pulse rounded-sm bg-black" style={{ height: 8 + ((i * 5) % 8), animationDelay: `${i * 120}ms` }} />
               ))}
             </span>
           ) : (

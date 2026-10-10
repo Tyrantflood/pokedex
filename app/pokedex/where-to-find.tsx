@@ -60,7 +60,7 @@ export function WhereToFind({ pokemon }: { pokemon: PokemonSummary }) {
       <h3 className="fx-flick mb-2 text-xs font-semibold uppercase tracking-widest text-white/70">Where to find</h3>
 
       {state === "loading" && (
-        <div role="status" aria-label="Loading encounter data" className="animate-pulse space-y-2">
+        <div role="status" aria-label="Loading encounter data" className="motion-safe:animate-pulse space-y-2">
           <div className="h-4 w-24 rounded bg-white/10" />
           <div className="h-10 w-full rounded-lg bg-black/25" />
           <div className="h-10 w-full rounded-lg bg-black/25" />

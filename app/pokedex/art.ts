@@ -62,6 +62,8 @@ export function artSet(p: PokemonSummary, mode: ArtMode, broken: ReadonlySet<str
 
 const NONE: ReadonlySet<string> = new Set();
 
+export const prefersReducedMotion = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 /**
  * Warms what the detail view will draw first for this Pokémon, in the mode the user is in: the image
  * itself (artwork or GIF) and, for a GIF, its first frame (used for the silhouette) and the static
@@ -72,7 +74,9 @@ export function preloadDetailArt(p: PokemonSummary, mode: ArtMode = readArtMode(
   preloadImage(base.src);
   if (base.animated) {
     preloadImage(base.fallback.src);
-    void firstFrame(base.src);
+    // A first frame is only ever drawn for reduced motion (a paused GIF); extracting one reads pixels back from a canvas, which
+    // blocks the main thread, so nobody else pays for it.
+    if (prefersReducedMotion()) void firstFrame(base.src);
     measureSpriteBounds(base.fallback.src).catch(() => {}); // to size the stand-in like the GIF
   }
 }

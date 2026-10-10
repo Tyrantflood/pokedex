@@ -3,7 +3,7 @@
 import { useEffect, type RefObject } from "react";
 
 const HINT_DELAY_MS = 500;
-const HINT_TEXT = "Drag onto another card to compare";
+const HINT_TEXT = "Drag onto a card to compare, or into your team";
 const DONE_KEY = "pokedex:drag-compared";
 
 // Kept in memory as well, so a browser that blocks storage still stops the hint for the page's life.
@@ -18,7 +18,7 @@ function hasDragCompared(): boolean {
   }
 }
 
-/** Call when a drag-compare completes: the hint is no longer shown for the rest of the session. */
+/** Call when a drag completes (compare or add to the team): the hint is no longer shown for the rest of the session. */
 export function markDragCompared(): void {
   dragComparedThisPage = true;
   try {

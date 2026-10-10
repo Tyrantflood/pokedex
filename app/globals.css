@@ -919,3 +919,15 @@ body.is-card-dragging .team-bar {
     height: 20px;
   }
 }
+
+/* Drop highlights without movement under reduced motion: the glow and border still say where it will land. */
+@media (prefers-reduced-motion: reduce) {
+  .holo-card[data-drop="true"] .holo-inner,
+  .team-slot[data-drop="true"] {
+    transform: none;
+  }
+  .holo-inner,
+  .team-slot {
+    transition: none;
+  }
+}

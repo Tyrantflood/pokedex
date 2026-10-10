@@ -9,7 +9,7 @@ import {
   useReducedMotion,
   useTransform,
 } from "framer-motion";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { loadEvolutionChain, loadFlavorText, type EvolutionResult } from "@/app/actions";
 import type { EvolutionNode } from "@/lib/evolution";
 import { evolvesInto } from "@/lib/evolution-path";
@@ -211,6 +211,21 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
     return () => clearTimeout(timer);
   }, [reduceMotion]);
   const dropFx = useCallback(() => setFxOn(false), []);
+
+  // Opening used to run one 250 ms click task (at 4x CPU slowdown) because everything below the sprite mounted in the same render
+  // as the panel: the type chips, evolution chain, encounter list and cry panel. They are invisible until the content fades in
+  // (0.3 s), so they mount two frames later, once the flight has started, and the flight never waits for them.
+  const [sectionsReady, setSectionsReady] = useState(false);
+  useEffect(() => {
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => startTransition(() => setSectionsReady(true)));
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, []);
   useFrameGuard(fxOn && !reduceMotion, dropFx);
 
   // The scan and the readouts wait for a still image to be decoded: the artwork, or for an animated sprite
@@ -553,7 +568,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
       </div>
 
       <div
-        className="absolute inset-0 overflow-y-auto overscroll-contain"
+        className="absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-contain"
         onClick={(e) => {
           if (e.target === e.currentTarget || (e.target as HTMLElement).dataset.dismiss) requestClose();
         }}
@@ -648,7 +663,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                 <span aria-hidden>✦</span> Shiny
               </button>
             )}
-            <CryPanel key={current.id} url={current.cry} color={color} name={name} reduceMotion={reduceMotion} />
+            {sectionsReady && <CryPanel key={current.id} url={current.cry} color={color} name={name} reduceMotion={reduceMotion} />}
           </div>
           </div>
 
@@ -690,8 +705,8 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
                   <section aria-label="Pokédex entry" className="min-h-[3.75rem]">
                     {flavor === undefined ? (
                       <div role="status" aria-label="Loading Pokédex entry" className="space-y-2 pt-1">
-                        <div className="h-3 w-full animate-pulse rounded bg-white/10" />
-                        <div className="h-3 w-4/5 animate-pulse rounded bg-white/10" />
+                        <div className="h-3 w-full motion-safe:animate-pulse rounded bg-white/10" />
+                        <div className="h-3 w-4/5 motion-safe:animate-pulse rounded bg-white/10" />
                       </div>
                     ) : (
                       <FlavorText text={flavor} ghost={fxKind === "ghost" && !reduceMotion} />
@@ -760,23 +775,25 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
 
             {/* Outside the swapping block on purpose: that block is inside an AnimatePresence with initial={false}, which would
                 make everything in it skip its entrance animation on the first open, chips included. Keyed, so it re-pops per Pokémon. */}
-            <TypeCalculator key={`types-${current.id}`} types={current.types} delay={switchKind === "open" ? OPEN_CHIPS_DELAY_S : SWITCH_CHIPS_DELAY_S} />
+            {sectionsReady && <TypeCalculator key={`types-${current.id}`} types={current.types} delay={switchKind === "open" ? OPEN_CHIPS_DELAY_S : SWITCH_CHIPS_DELAY_S} />}
 
             {/* Outside the swapping block, so it (and keyboard focus on a stage) survives a switch. */}
             <section aria-label="Evolution chain">
               <h3 className="fx-flick mb-2 text-xs font-semibold uppercase tracking-widest text-white/70" style={flick(4)}>Evolution</h3>
-              <EvolutionSection
-                state={evolution}
-                current={current}
-                accent={color}
-                resolveSpecies={resolveSpecies}
-                onSelect={selectStage}
-                onRetry={retryEvolution}
-              />
+              {sectionsReady && (
+                <EvolutionSection
+                  state={evolution}
+                  current={current}
+                  accent={color}
+                  resolveSpecies={resolveSpecies}
+                  onSelect={selectStage}
+                  onRetry={retryEvolution}
+                />
+              )}
             </section>
 
             {/* Loaded when the view opens (and again for each stage you switch to). */}
-            <WhereToFind key={`where-${current.id}`} pokemon={current} />
+            {sectionsReady && <WhereToFind key={`where-${current.id}`} pokemon={current} />}
           </div>
         </div>
       </div>
@@ -827,8 +844,8 @@ function useFitTransform(src: string | null): string | undefined {
  * The first frame of an animated image: `undefined` while it is being extracted, `null` if it can't be
  * (callers then fall back), and the still image's URL otherwise. Not animated: always `null`.
  */
-function useStill(img: ArtImage | null): string | null | undefined {
-  const src = img?.animated ? img.src : null;
+function useStill(img: ArtImage | null, enabled: boolean): string | null | undefined {
+  const src = enabled && img?.animated ? img.src : null;
   const [result, setResult] = useState<{ src: string; still: string | null } | null>(null);
   useEffect(() => {
     if (!src) return;
@@ -874,15 +891,20 @@ function ArtLayer({
   const [phase] = useState(() => (performance.now() / 1000) % BOB_S);
   const bobbing = bob && !reduce;
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      data-s={layer}
-      src={src}
-      alt={alt}
-      draggable={false}
-      className={`absolute inset-0 h-full w-full object-contain ${pixelated ? "[image-rendering:pixelated]" : ""} ${bobbing ? "art-bob" : ""} ${className}`}
-      style={bobbing ? { ...style, animationDelay: `-${phase}s` } : fit ? { ...style, transform: fit } : style}
-    />
+    // The wrapper is always there (so the image is never remounted when the stand-in becomes the GIF) and clips only a
+    // fitted image: that one is scaled up around its centre (up to about x2.3), so its box, though invisible padding, sticks
+    // out of the slot and made the whole panel scroll sideways for a few frames at phone width.
+    <div className={`absolute inset-0 ${fit ? "overflow-hidden" : ""}`}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        data-s={layer}
+        src={src}
+        alt={alt}
+        draggable={false}
+        className={`absolute inset-0 h-full w-full object-contain ${pixelated ? "[image-rendering:pixelated]" : ""} ${bobbing ? "art-bob" : ""} ${className}`}
+        style={bobbing ? { ...style, animationDelay: `-${phase}s` } : fit ? { ...style, transform: fit } : style}
+      />
+    </div>
   );
 }
 
@@ -923,8 +945,9 @@ function ScanArt({
   const { base } = art;
   const shinyArt = art.shiny;
 
-  const baseStill = useStill(base);
-  const shinyStill = useStill(shinyArt);
+  // Only reduced motion draws a still frame, and extracting one blocks the main thread (a canvas readback), so nobody else pays for it.
+  const baseStill = useStill(base, reduce);
+  const shinyStill = useStill(shinyArt, reduce);
   /** What to draw for an image: itself, or (paused for reduced motion) its first frame. */
   const visible = (img: ArtImage, still: string | null | undefined): (StillImage & { bob: boolean }) | null => {
     if (!img.animated) return img;
@@ -1154,7 +1177,7 @@ function EvolutionSection({
 }) {
   if (state === "loading") {
     return (
-      <div role="status" aria-label="Loading evolution chain" className="flex animate-pulse items-center gap-4">
+      <div role="status" aria-label="Loading evolution chain" className="flex motion-safe:animate-pulse items-center gap-4">
         {[0, 1, 2].map((i) => (
           <div key={i} className="h-20 w-20 rounded-xl bg-black/30" />
         ))}
@@ -1264,7 +1287,7 @@ function EvolutionStage({
   return (
     <button
       type="button"
-      className={`${base} transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 ${isCurrent ? "cursor-default" : "cursor-pointer hover:brightness-125"}`}
+      className={`${base} motion-safe:transition-transform motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 ${isCurrent ? "cursor-default" : "cursor-pointer hover:brightness-125"}`}
       style={style}
       aria-label={isCurrent ? `${pretty(node.species)} (shown)` : `View ${pretty(node.species)}`}
       aria-current={highlighted ? "true" : undefined}

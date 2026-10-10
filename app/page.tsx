@@ -29,7 +29,7 @@ function GridSkeleton() {
       <p className="mb-4 text-sm text-zinc-400">
         Loading Pokémon… the first load fetches ~1,350 entries and can take a minute.
       </p>
-      <div className="grid animate-pulse grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+      <div className="grid motion-safe:animate-pulse grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
         {Array.from({ length: 24 }, (_, i) => (
           <div key={i} className="h-[248px] rounded-2xl bg-zinc-800/70" />
         ))}

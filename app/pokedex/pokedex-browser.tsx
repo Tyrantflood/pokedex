@@ -5,7 +5,7 @@ import type { CardRects } from "./card-rects";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { PokemonSummary } from "@/lib/summary";
-import { addMember, emptyTeam, removeMember, slotOf, teamMembers, type Candidate } from "@/lib/team";
+import { addMember, emptyTeam, removeMember, slotOf, teamMembers, type Candidate, type Team } from "@/lib/team";
 import { CompareTray } from "./compare-tray";
 import { CompareView } from "./compare-view";
 import { Controls } from "./controls";
@@ -150,11 +150,20 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
   const lookup = useCallback((id: number) => byId.get(id), [byId]);
 
   // ---- Team ----
-  const { team, setTeam, loaded: teamLoaded } = useTeam(lookupKnown(byId));
+  const { team, setTeam: saveTeam, loaded: teamLoaded } = useTeam(lookupKnown(byId));
   const teamRef = useRef(team);
   useEffect(() => {
     teamRef.current = team;
   });
+  // Every change goes through here: the ref is updated at once, so two changes in quick succession (two taps before React has re-rendered)
+  // each start from the result of the one before instead of the second overwriting the first.
+  const setTeam = useCallback(
+    (next: Team) => {
+      teamRef.current = next;
+      saveTeam(next);
+    },
+    [saveTeam],
+  );
   const [flight, setFlight] = useState<Flight | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef(0);
@@ -216,10 +225,10 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
 
   const handleDrop = useCallback(
     (source: PokemonSummary, target: DropTarget, ghostRect: DOMRect | null) => {
-      if (target.kind === "card") {
-        markDragCompared();
-        openComparison(source, target.pokemon);
-      } else addToTeam(source, target.kind === "slot" ? target.slot : undefined, ghostRect);
+      // Either drag means the gesture has been learned, so the hint stops.
+      markDragCompared();
+      if (target.kind === "card") openComparison(source, target.pokemon);
+      else addToTeam(source, target.kind === "slot" ? target.slot : undefined, ghostRect);
     },
     [openComparison, addToTeam],
   );

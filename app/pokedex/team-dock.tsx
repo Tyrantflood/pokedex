@@ -45,6 +45,7 @@ interface Props {
  */
 export function TeamDock({ team, loaded, byId, candidates, flight, notice, onRemove, onClear, onAdd, onOpen }: Props) {
   const [open, setOpen] = useState(false);
+  const reduce = useReducedMotion() ?? false;
   const count = memberCount(team);
 
   // Escape closes the panel (but leaves it to a detail view or comparison when one is open on top).
@@ -70,9 +71,9 @@ export function TeamDock({ team, loaded, byId, candidates, flight, notice, onRem
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: reduce ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
             >
-              <TeamPanel team={team} byId={byId} candidates={candidates} onAdd={onAdd} />
+              <TeamPanel team={team} byId={byId} candidates={candidates} onAdd={onAdd} onClear={onClear} />
             </motion.section>
           )}
         </AnimatePresence>
@@ -91,7 +92,7 @@ export function TeamDock({ team, loaded, byId, candidates, flight, notice, onRem
             </span>
           </button>
 
-          <ol aria-label="Team slots" className="flex min-w-0 flex-1 items-center justify-between gap-1.5 sm:justify-start sm:gap-2.5">
+          <ol aria-label="Team slots" className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2.5">
             {team.slots.map((slot, index) => (
               <TeamSlot
                 key={index}
@@ -105,7 +106,7 @@ export function TeamDock({ team, loaded, byId, candidates, flight, notice, onRem
             ))}
           </ol>
 
-          <div className="flex shrink-0 flex-col items-end gap-1">
+          <div className="hidden shrink-0 flex-col items-end gap-1 sm:flex">
             {count > 0 && (
               <button
                 type="button"
@@ -147,7 +148,7 @@ function TeamSlot({
     <li
       data-team-slot={index}
       aria-label={pokemon ? `Slot ${index + 1}: ${pretty(pokemon.name)}` : `Slot ${index + 1}: empty`}
-      className="team-slot group relative h-10 w-10 shrink-0 rounded-xl border sm:h-12 sm:w-12"
+      className="team-slot group relative aspect-square min-w-0 max-w-12 flex-1 rounded-xl border"
       style={pokemon ? { borderColor: `color-mix(in srgb, ${color} 70%, transparent)`, background: `color-mix(in srgb, ${color} 18%, #0d1117)` } : undefined}
     >
       {pokemon ? (
@@ -169,7 +170,7 @@ function TeamSlot({
               src={pokemon.sprite}
               alt=""
               draggable={false}
-              className={`relative z-10 h-9 w-9 object-contain ${pokemon.pixel ? "[image-rendering:pixelated]" : ""}`}
+              className={`relative z-10 h-[88%] w-[88%] object-contain ${pokemon.pixel ? "[image-rendering:pixelated]" : ""}`}
               initial={flight && loaded && !reduce ? { x: flight.x, y: flight.y, scale: flight.scale, opacity: 0.85 } : false}
               animate={{ x: 0, y: 0, scale: 1, opacity: 1 }}
               transition={{ type: "spring", stiffness: 230, damping: 21, mass: 0.9 }}
@@ -235,11 +236,13 @@ function TeamPanel({
   byId,
   candidates,
   onAdd,
+  onClear,
 }: {
   team: Team;
   byId: Map<number, PokemonSummary>;
   candidates: Candidate[];
   onAdd: (pokemon: PokemonSummary, origin: DOMRect | null) => void;
+  onClear: () => void;
 }) {
   const members = useMemo(() => teamMembers(team).flatMap((m) => (byId.get(m.pokemonId) ? [byId.get(m.pokemonId)!] : [])), [team, byId]);
   const analysis = useMemo(() => analyseTeam(members.map((p) => p.types)), [members]);
@@ -316,6 +319,16 @@ function TeamPanel({
           </ul>
         </section>
       )}
+
+      <div className="flex justify-end sm:hidden">
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded-lg border border-white/25 px-3 py-1 text-xs text-white/80 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300"
+        >
+          Clear team
+        </button>
+      </div>
 
       <section aria-label="Suggestions">
         <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-widest text-white/70">Cover the gaps</h3>
