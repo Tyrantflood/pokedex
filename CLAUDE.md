@@ -14,7 +14,10 @@ promises.
 - `npm run build` runs `prebuild` first (`scripts/build-location-names.mjs`, see "Where to find": a no-op unless the name table is over 30 days old) and
   `scripts/check-built-css.mjs` afterwards (see "Build check").
 - `npm test`: Node's built-in runner over `tests/**/*.test.ts` (TypeScript stripped by Node; `tests/resolver.mjs` handles extensionless and `@/` imports).
-  No network, about 1 s. To add a test, put a `*.test.ts` in `tests/` and import from `../lib/...` (only modules without `next/*` imports are importable).
+  No network, about 2 s, 49 tests (type chart, type calculator, scale maths, radar, verdict, misspell, preload cache, encounters, location names and table, the name-table build script).
+  To add a test, put a `*.test.ts` in `tests/` and import from `../lib/...` (only modules without `next/*` imports are importable).
+- `npm run snapshot` (`scripts/snapshot-pokeapi.mjs`, ~10 s) re-saves `tests/fixtures/pokeapi-types.json` (all 18 types' damage relations) and `pokemon-slim.json`
+  (id, name, types, stats, height of all 1,351 Pokémon and forms). Tests read these instead of the live API; refresh only on purpose and review the diff.
 - Lint: `npx eslint app lib scripts`; types: `npx tsc --noEmit`. Both are clean; keep them so.
 - Judge performance on the **production** build. Dev mode (React dev instrumentation) is several times slower and misleading.
 
@@ -30,7 +33,8 @@ promises.
 - `app/boot-intro.tsx`, `app/night-mode.tsx`, `app/layout.tsx` (inline scripts), `app/icon.tsx` / `apple-icon.tsx` / `opengraph-image.tsx` / `twitter-image.tsx`, `lib/brand.tsx`, `lib/og-image.tsx`.
 - `scripts/`: `check-built-css.mjs`, `build-favicon.mjs`, `generate-caustic.mjs`, `build-location-names.mjs`.
 - `lib/encounters.ts`, `encounter-data.ts`, `encounter-format.ts`, `location-names.ts`, `location-table.ts`, `location-names.generated.json` (committed), `games.ts`; `app/pokedex/where-to-find.tsx`.
-- `tests/`: the project's test suite (see Commands).
+- `tests/`: the project's test suite (see Commands); `tests/fixtures/` holds the saved PokéAPI data (`load.ts` reads it).
+- `app/pokedex/type-calculator.tsx` (+ `defenseProfile` in `lib/type-chart.ts`): the detail view's type matchups.
 
 ## Decisions, and why (don't reverse these without re-checking the reason)
 
@@ -155,6 +159,20 @@ The Vercel layout is assumed from the Build Output API, not observed.
     Per-frame canvas drawing was therefore not used (it would need WebCodecs `ImageDecoder`).
   - Cost (phone viewport, 4x CPU): scan 66 frames/s, 8 ms/s raster; idle with a GIF playing 60 frames/s, 2 ms/s; evolution 61 frames/s, 3 ms/s.
 
+### Type calculator (`app/pokedex/type-calculator.tsx`, `defenseProfile` in `lib/type-chart.ts`)
+- Reuses comparison mode's chart (`multiplier`/`effectiveness`), so there is one source of truth for type maths. `defenseProfile(types)` takes the *current Pokémon's own types*
+  (a regional form has its own: Alolan Vulpix is ice, Vulpix is fire), multiplies the two halves (so x4 and x0.25 exist, a weakness and a resistance **cancel to neutral and
+  appear nowhere**, and an immunity beats any weakness: Gligar takes x0 from electric, never x2) and returns non-empty groups in the order x4, x2, x0.5, x0.25, x0.
+- UI: "Weak to / Resists / Immune to" rows, chips in type colours with a red (weakness) / green (resistance) / black (immunity) multiplier badge. The chips pop in with a stagger
+  (`delayChildren` 0.75 s on first open, 0.45 s after a switch; reduced motion: no delay, no stagger). It re-pops for each Pokémon (keyed).
+- **Where it lives matters:** it sits *outside* the swapping `AnimatePresence initial={false}` block, because that prop makes *everything inside it* skip its entrance
+  animation on the first open (the chips were simply there, found by sampling opacity per frame). **Sibling keys must differ:** `TypeCalculator` and `WhereToFind` are
+  siblings and both used `key={current.id}`; React then keeps both (duplicate-key warning in dev only; in production the old one just stayed on screen after an
+  evolution). They are now `types-${id}` and `where-${id}`. Check a dev run's console after adding keyed siblings.
+- Tested (`tests/type-chart.test.ts`): a 4x weakness (Dragonite/ice, Charizard/rock), a dual-type cancel-out (Volcanion vs water and grass), an immunity overriding a weakness
+  (Gligar, Skarmory), a regional form with different types (Vulpix and Sandshrew vs their Alolan forms), every one of the 171 single/dual typings against the chart, and all
+  1,351 snapshot Pokémon. The 324-pair chart check now runs against the saved PokéAPI snapshot. Browser: the chips matched the chart for 14 Pokémon.
+
 ### Where to find (`where-to-find.tsx`, `lib/encounter-*.ts`, `lib/games.ts`)
 - Loaded on demand per Pokémon (server action `loadEncounters(id)`, cached for days; one request per Pokémon per page load, failures not kept so Retry works).
   PokéAPI `/pokemon/{id}/encounters` is per *form id*, so Megas and other forms honestly have none.
@@ -220,9 +238,10 @@ The Vercel layout is assumed from the Build Output API, not observed.
   `Display::DrawAndSwap` per second, with `Emulation.setCPUThrottlingRate` for the main thread.
 - Always sanity-check a measuring harness with a control that *must* fail before trusting a green result.
 - Time-based features (night mode) are tested with Playwright's `page.clock`, crossing the boundary with the page open.
-- Pure logic (type chart, scale math, radar, verdict, misspell) was unit-tested in scratch scripts with Node's built-in TypeScript
-  stripping plus a tiny resolver hook; the encounter/location code is covered by the project suite in `tests/` (`npm test`). The older scratch tests were not moved.
-- To prove a test can fail, **mutate the code on purpose** and see `npm test` go red (done for the resolver, table lookup, build script and Japan-edition rule).
+- Pure logic is unit-tested in the project suite `tests/` (`npm test`; Node's built-in runner and TypeScript stripping plus the resolver hook in `tests/resolver.mjs`), against
+  saved PokéAPI snapshots, never the live API.
+- To prove a test can fail, **mutate the code on purpose** and see `npm test` go red (done for the resolver, table lookup, build script, Japan-edition rule, the type maths,
+  radar rounding, the narrow-stage scale, the misspell length rule and the preload cap). A mutant that survives means a test is missing: that is how a "Road N" test gap was found.
 
 ## Environment gotchas (Windows, Git Bash tool)
 

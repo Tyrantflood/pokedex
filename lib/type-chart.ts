@@ -76,3 +76,25 @@ export function multiplierVerdict(m: number): string {
   if (m <= 0.25) return "barely scratches";
   return "not very effective";
 }
+
+/** The multipliers a defender can end up with that are not neutral, in the order they are listed: weaknesses, resistances, immunities. */
+export const DEFENSE_BUCKETS = [4, 2, 0.5, 0.25, 0] as const;
+export type DefenseMultiplier = (typeof DEFENSE_BUCKETS)[number];
+
+export interface DefenseGroup {
+  multiplier: DefenseMultiplier;
+  /** The attacking types that hit this defender for that multiplier, in chart order. */
+  types: PokemonType[];
+}
+
+/**
+ * How every attacking type fares against a defender (one or two types), grouped by multiplier: x4, x2, x0.5, x0.25, x0.
+ * Neutral matchups are left out, and so are empty groups. A dual type is the product of its two halves, so a weakness
+ * and a resistance cancel out (it lands in no group), and an immunity beats any weakness (x0, never x2 or x4).
+ */
+export function defenseProfile(defenders: PokemonType[]): DefenseGroup[] {
+  return DEFENSE_BUCKETS.map((multiplier) => ({
+    multiplier,
+    types: CHART_TYPES.filter((attacker) => effectiveness(attacker, defenders) === multiplier),
+  })).filter((group) => group.types.length > 0);
+}

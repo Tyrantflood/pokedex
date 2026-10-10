@@ -24,6 +24,7 @@ import { CryPanel } from "./cry-panel";
 import { artSet, preloadDetailArt, readArtMode, saveArtMode, type ArtImage, type ArtMode, type ArtSet, type StillImage } from "./art";
 import { EVOLVE_REVEAL_S, EvolveFx, Sparkles } from "./evolve-fx";
 import { FlavorText } from "./flavor-text";
+import { TypeCalculator } from "./type-calculator";
 import { WhereToFind } from "./where-to-find";
 import { TypeFx, fxKindOf, useFrameGuard } from "./type-fx";
 
@@ -58,6 +59,9 @@ const BOB_S = 2.6;
 const SWITCH_S = 0.18;
 const READOUT_EASE = [0.16, 1, 0.3, 1] as const;
 const STAT_TICK_S = 0.95;
+/** The type chips start popping in after the open animation (first view) or just after a switch. */
+const OPEN_CHIPS_DELAY_S = 0.75;
+const SWITCH_CHIPS_DELAY_S = 0.45;
 const STAT_STAGGER_S = 0.11;
 
 const STAT_ROWS = [
@@ -754,6 +758,10 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
               </motion.div>
             </AnimatePresence>
 
+            {/* Outside the swapping block on purpose: that block is inside an AnimatePresence with initial={false}, which would
+                make everything in it skip its entrance animation on the first open, chips included. Keyed, so it re-pops per Pokémon. */}
+            <TypeCalculator key={`types-${current.id}`} types={current.types} delay={switchKind === "open" ? OPEN_CHIPS_DELAY_S : SWITCH_CHIPS_DELAY_S} />
+
             {/* Outside the swapping block, so it (and keyboard focus on a stage) survives a switch. */}
             <section aria-label="Evolution chain">
               <h3 className="fx-flick mb-2 text-xs font-semibold uppercase tracking-widest text-white/70" style={flick(4)}>Evolution</h3>
@@ -768,7 +776,7 @@ export function DetailView({ pokemon: original, origin, resolveSpecies, onClosed
             </section>
 
             {/* Loaded when the view opens (and again for each stage you switch to). */}
-            <WhereToFind key={current.id} pokemon={current} />
+            <WhereToFind key={`where-${current.id}`} pokemon={current} />
           </div>
         </div>
       </div>
