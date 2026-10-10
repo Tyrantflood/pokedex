@@ -46,16 +46,16 @@ const bestChance = (loc: EncounterLocation) => loc.entries[0]?.chance ?? 0;
 /**
  * Groups raw encounter areas by game and then by readable location.
  *
+ * `nameOf` turns an area slug into the name to show (see lib/location-names.ts); by default it is made from the slug.
  * Within one area, the rows PokéAPI lists per slot (and per level) are summed for the same method and conditions,
- * since each slot adds to the chance of meeting this Pokémon. Areas that read as the same location (for instance
- * "kanto-route-1-area" and "route-1-area") are merged by taking the best chance and the widest level range.
+ * since each slot adds to the chance of meeting this Pokémon. Areas that end up with the same name are merged by taking the best chance and the widest level range.
  * Games come back in release order; unknown versions sort last.
  */
-export function buildGameEncounters(raw: RawEncounterArea[]): GameEncounters[] {
+export function buildGameEncounters(raw: RawEncounterArea[], nameOf: (areaSlug: string) => string = locationName): GameEncounters[] {
   const games = new Map<string, Map<string, Map<string, EncounterEntry>>>();
 
   for (const area of raw) {
-    const location = locationName(area.location_area.name);
+    const location = nameOf(area.location_area.name);
     for (const detail of area.version_details) {
       // This area, this game: sum the slots that share a method and conditions.
       const here = new Map<string, EncounterEntry>();

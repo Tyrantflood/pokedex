@@ -153,12 +153,25 @@ The Vercel layout is assumed from the Build Output API, not observed.
 ### Where to find (`where-to-find.tsx`, `lib/encounter-*.ts`, `lib/games.ts`)
 - Loaded on demand per Pokémon (server action `loadEncounters(id)`, cached for days; one request per Pokémon per page load, failures not kept so Retry works).
   PokéAPI `/pokemon/{id}/encounters` is per *form id*, so Megas and other forms honestly have none.
-- `buildGameEncounters` (pure, unit-tested): slots in one area with the same method and conditions are **summed** (capped at 100); areas that read as the same
-  location (`kanto-route-1-area` and `route-1-area`) are merged by **best chance and widest levels**; locations are ranked by best chance. Games are in
+- `buildGameEncounters` (pure, unit-tested): slots in one area with the same method and conditions are **summed** (capped at 100); areas that end up with the same
+  *name* are merged by **best chance and widest levels**; locations are ranked by best chance. Games are in
   release order from the static list in `lib/games.ts` (add new versions there; unknown versions still show, last).
 - Honesty rules: a game with no data is worded "No wild encounter data", never "not found". Those lines only cover main-series games from the Pokémon's own
   generation onwards, consecutive ones collapsed into one line; spin-offs, DLC and regional editions only appear when they have data. The Japanese Red/Green/Blue
   editions are hidden when the international games have data (they repeat it). A note always says starters, gifts, trades and newer games are often missing.
+- **Location names come from PokéAPI** (`/location-area/{slug}` and its `/location/{slug}`), cached per slug with `"use cache"` + `cacheLife("max")`; the raw
+  encounter list is cached for days, and the combined result is *not* cached as a whole, so a name lookup that failed (non-404) is retried on the next view instead
+  of freezing the slug fallback in. A 404 is cached as "no such entry". 40 lookups in flight. Measured: first view of Zubat (160 areas, 77 locations) 3.3 s, the
+  same Pokémon again 0.13 s with **0** outbound requests; Golbat then only fetched the 68 areas / 18 locations Zubat hadn't.
+  - **The two English names disagree, so the resolver combines them**: the *location's* name is the one the games use ("Route 120", "Mt. Moon", "Pokémon Tower");
+    the *area's* is more specific but often spelled differently ("Road 120", "Mount Moon (1F)", "Pokemon Tower (7F)", and "Relic Tunnel" where the location says
+    "Relic Passage"). Rule: location spelling for the place + what the area adds ("Mt. Moon (1F)", "Route 2 (South, ...)"). If the area name doesn't start with the
+    location's (`Safari Zone Peak`, `Pokemon Center (Cianwood City)`) it is used as it is, unless its slug shows it is inside that location and the parenthesis is
+    only a qualifier. "Road N" becomes "Route N" only when the area's slug contains `route-N` (so "Victory Road 1" is untouched).
+  - Without an English *area* name (241 of 1,539 areas) it is the location's English name plus the part of the slug after the location's slug ("Route 1 (East)"); with
+    no English name at all (7 areas, e.g. `hoenn-pokecenter-area`) the whole slug is formatted. Checked against all 1,539 areas: no empty names, no "()", and the
+    only "Road N" left are real Victory Roads. Different regions' routes share names ("Route 12"), which is fine because a game is one region.
+  - Not done: a build-time or on-disk name table. Names live in the server's memory cache, so a cold server (or each serverless instance) pays the first-view cost again.
 - Top 3 locations per game and top 3 methods per location, then "Show N more"; the first 4 rows, then "Show N more game entries".
 - **Why these choices (Where to find):**
   - *Normalised on the server*, not in the browser: raw encounter JSON is large (Zubat is 160 areas across 30+ games); the browser only gets the grouped, ranked result.
@@ -166,8 +179,9 @@ The Vercel layout is assumed from the Build Output API, not observed.
     (checked against 7 Pokémon: none unknown) and each game carries a generation and a `main` flag, which is what decides who gets a "no data" line.
   - *Sum slots, then max across areas*: PokéAPI lists one row per slot/level, and slots add up to the chance of meeting the Pokémon in that area, so they are
     summed. Different areas of one location are alternatives, so they take the best chance. Different *conditions* (morning/night, swarm) stay separate entries, never summed.
-  - *Region prefix and "-area" are stripped* from location slugs (the game already tells you the region). Sub-areas with their own slug
-    ("route-2-south-towards-viridian-city") are deliberately **not** merged into the parent route: guessing which sub-areas belong together would invent data.
+  - *Location names come from PokéAPI's English names, not slugs* (`lib/location-names.ts`, `resolveLocationName` in `lib/encounter-format.ts`). The slug
+    formatter (`locationName`: strips the region prefix and "-area", "mt" to "Mt.", floors to "1F") is only the fallback. Sub-areas with their own name
+    ("Route 2 (South, towards Viridian City)") are deliberately **not** merged into the parent route: guessing which sub-areas belong together would invent data.
   - *"No data" is worded as a data gap, never an absence*, and the note under the list says why: the API misses starters, gifts, trades, special encounters
     and the newest games (Gen 9 Pokémon such as Gholdengo have none at all). Do not change the wording to "not found".
   - *Known limits:* the chance is the slot chance inside that area (not an overall odds figure), it does not know which games a Pokémon is actually in, and
