@@ -5,6 +5,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXTENSIONS = [".ts", ".tsx", "/index.ts", "/index.tsx"];
 
+/** The app imports JSON the bundler way (no `with { type: "json" }`); give Node the attribute it insists on. */
+export async function load(url, context, nextLoad) {
+  if (url.endsWith(".json") && !context.importAttributes?.type) {
+    return nextLoad(url, { ...context, importAttributes: { ...context.importAttributes, type: "json" } });
+  }
+  return nextLoad(url, context);
+}
+
 /** Maps "@/lib/x" and "./x" (no extension) to the real .ts/.tsx file; everything else is left to Node. */
 export async function resolve(specifier, context, nextResolve) {
   let base = null;

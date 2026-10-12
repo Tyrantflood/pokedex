@@ -13,6 +13,8 @@
     "postbuild": "node scripts/check-built-css.mjs"
   },
   "dependencies": {
+    "@pkmn/randoms": "0.10.11",
+    "@pkmn/sim": "0.10.11",
     "@wasm-audio-decoders/ogg-vorbis": "0.1.20",
     "framer-motion": "^14.0.0",
     "next": "16.4.0",
