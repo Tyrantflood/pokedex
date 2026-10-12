@@ -86,6 +86,7 @@ export type CueKind =
   | "boost"
   | "unboost"
   | "miss"
+  | "block"
   | "tera"
   | "mega"
   | "win"
@@ -99,8 +100,16 @@ export interface Cue {
   moveType?: string;
   /** Hit-effectiveness of the last move: set on damage cues that follow a super effective / resisted line. */
   effect?: "super" | "resisted" | "immune" | "crit";
-  /** Short text to float over the Pokémon: "-27%", "BRN", "Atk ?". */
+  /** Short text to float over the Pokémon: "-27%", "BRN", "Atk ▲". */
   label?: string;
+  /** Move cues: the move, its category, whether it targets its own user, and the banner sentence ("The opposing X used Y!"). */
+  moveName?: string;
+  moveCategory?: string;
+  selfTarget?: boolean;
+  banner?: string;
+  /** Damage cues: percent of the Pokémon's HP lost, and whether it came from something other than a move (poison, recoil, hazards). */
+  amount?: number;
+  fromEffect?: boolean;
 }
 
 export interface LineResult {
@@ -344,7 +353,18 @@ export function applyLine(view: BattleView, line: string, ownSide: SideId, looku
       const subject = label(view, ownSide, ident);
       push(view, `${subject} used ${moveName}!`, "move");
       if (t.miss !== undefined) push(view, `${target ? label(view, ownSide, target) : "The target"} avoided the attack!`);
-      return { cue: { kind: "move", side: ident.side, target: target?.side, moveType: info.type }, delay: HOLD.move };
+      const cue: Cue = {
+        kind: "move",
+        side: ident.side,
+        target: target?.side,
+        moveType: info.type,
+        moveName,
+        moveCategory: info.category,
+        // Moves aimed at the user itself (Swords Dance) or at nobody in particular (weather, hazards).
+        selfTarget: !target || (target.side === ident.side && target.position === ident.position),
+        banner: `${subject} used ${moveName}!`,
+      };
+      return { cue, delay: HOLD.move };
     }
     case "cant": {
       const ident = parseIdent(arg(0));
@@ -389,7 +409,10 @@ export function applyLine(view: BattleView, line: string, ownSide: SideId, looku
         push(view, lines[from] ?? `${subject} was hurt by ${from}!`, "bad");
       }
       const lost = Math.round((before - hpFraction(mon)) * 100);
-      return { cue: { kind: "damage", side: ident.side, label: lost > 0 ? `-${lost}%` : undefined }, delay: lost > 0 ? HOLD.damage : HOLD.text };
+      return {
+        cue: { kind: "damage", side: ident.side, label: lost > 0 ? `-${lost}%` : undefined, amount: Math.max(0, lost), fromEffect: !!t.from },
+        delay: lost > 0 ? HOLD.damage : HOLD.text,
+      };
     }
     case "-heal": {
       const ident = parseIdent(arg(0));
@@ -565,6 +588,16 @@ export function applyLine(view: BattleView, line: string, ownSide: SideId, looku
       if (/^(Protect|Detect|Spiky Shield|King's Shield|Baneful Bunker|Obstruct|Silk Trap|Burning Bulwark)$/.test(name)) {
         push(view, `${label(view, ownSide, ident)} protected itself!`);
         return { delay: HOLD.text };
+      }
+      return quiet;
+    }
+    case "-activate": {
+      // A shield catching an attack: the move that was blocked has already been announced.
+      const ident = parseIdent(arg(0));
+      const name = effectName(arg(1));
+      if (/^(Protect|Detect|Spiky Shield|King's Shield|Baneful Bunker|Obstruct|Silk Trap|Burning Bulwark|Max Guard)$/.test(name)) {
+        push(view, `${label(view, ownSide, ident)} blocked the attack!`);
+        return { cue: { kind: "block", side: ident.side }, delay: HOLD.text };
       }
       return quiet;
     }

@@ -132,7 +132,7 @@ function BattleScreen({ config, onRematch, onLeave }: { config: BattleConfig; on
           </div>
         ) : (
           <div className="relative">
-            <BattleField view={view} cue={state.cue} />
+            <BattleField view={view} cue={state.cue} cues={state.cues} />
             {state.status === "loading" && (
               <div className="absolute inset-0 grid place-items-center rounded-2xl bg-black/50 text-sm text-zinc-200" role="status">
                 Loading the simulator…
