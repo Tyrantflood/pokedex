@@ -1,7 +1,7 @@
 import type { SideId } from "@/lib/battle/protocol";
 
 /** Where each side's Pokémon stands, as a percentage of the field: horizontal centre and the bottom edge of the sprite. */
-export const SPOT: Record<SideId, { x: number; y: number }> = { p1: { x: 27, y: 88 }, p2: { x: 72, y: 50 } };
+export const SPOT: Record<SideId, { x: number; y: number }> = { p1: { x: 27, y: 82 }, p2: { x: 72, y: 50 } };
 
 export interface Size {
   w: number;

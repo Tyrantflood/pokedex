@@ -9,6 +9,7 @@ import { BattleField } from "./battle-field";
 import { BattleLog } from "./battle-log";
 import { Lobby } from "./lobby";
 import { isLastStand } from "@/lib/battle/music-data";
+import { normalizeTurnLimit, type TurnLimit } from "@/lib/battle/turn-limit";
 import { useBattleMusic } from "./use-battle-music";
 import { useLocalBattle, type BattleConfig } from "./use-local-battle";
 import { useStored } from "./use-stored";
@@ -17,9 +18,11 @@ export interface BattleSettings {
   name: string;
   formatKey: string;
   difficulty: Difficulty;
+  /** 0 = no limit. */
+  turnLimit: TurnLimit;
 }
 
-const DEFAULTS: BattleSettings = { name: "", formatKey: "natdex", difficulty: "normal" };
+const DEFAULTS: BattleSettings = { name: "", formatKey: "natdex", difficulty: "normal", turnLimit: 0 };
 const SETTINGS_KEY = "battle:settings";
 const MUTED_KEY = "battle:muted";
 const MUSIC_KEY = "battle:music";
@@ -32,6 +35,7 @@ function parseSettings(raw: string): BattleSettings {
       name: typeof parsed.name === "string" ? parsed.name.slice(0, 18) : "",
       formatKey: formatByKey(parsed.formatKey).key,
       difficulty: parsed.difficulty === "easy" ? "easy" : "normal",
+      turnLimit: normalizeTurnLimit(parsed.turnLimit),
     };
   } catch {
     return DEFAULTS;
@@ -43,7 +47,7 @@ export function BattleApp() {
   const [run, setRun] = useState<{ id: number; config: BattleConfig } | null>(null);
   const update = (next: BattleSettings) => setRawSettings(JSON.stringify(next));
   const begin = (config: BattleConfig) => setRun((previous) => ({ id: (previous?.id ?? 0) + 1, config }));
-  const start = () => begin({ format: formatByKey(settings.formatKey), difficulty: settings.difficulty, playerName: settings.name.trim() || "Trainer" });
+  const start = () => begin({ format: formatByKey(settings.formatKey), difficulty: settings.difficulty, playerName: settings.name.trim() || "Trainer", turnLimit: settings.turnLimit });
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 pb-10 pt-4">
@@ -89,7 +93,7 @@ function BattleScreen({ config, onRematch, onLeave }: { config: BattleConfig; on
       <div className="min-w-0 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-zinc-300">
-            <span className="font-bold text-white">{config.format.label}</span> · CPU {config.difficulty === "easy" ? "Easy" : "Normal"}
+            <span className="font-bold text-white">{config.format.label}</span> · CPU {config.difficulty === "easy" ? "Easy" : "Normal"}{config.turnLimit ? ` · ${config.turnLimit}-turn limit` : ""}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <ToggleButton pressed={fast} onClick={() => setFast((f) => !f)} label="Fast" />
@@ -132,7 +136,7 @@ function BattleScreen({ config, onRematch, onLeave }: { config: BattleConfig; on
           </div>
         ) : (
           <div className="relative">
-            <BattleField view={view} cue={state.cue} cues={state.cues} />
+            <BattleField view={view} cue={state.cue} cues={state.cues} turnLimit={config.turnLimit} />
             {state.status === "loading" && (
               <div className="absolute inset-0 grid place-items-center rounded-2xl bg-black/50 text-sm text-zinc-200" role="status">
                 Loading the simulator…

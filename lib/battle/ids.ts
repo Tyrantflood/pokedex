@@ -20,6 +20,17 @@ export function battleSpriteUrls(spriteId: number, facing: Facing): string[] {
   return [`${SPRITES}/other/showdown/${back}${spriteId}.gif`, `${SPRITES}/${back}${spriteId}.png`];
 }
 
+/** Every picture PokéAPI has for one Pokémon, for the sprite fallback chain (lib/battle/sprite-chain.ts). */
+export function allSpriteUrls(spriteId: number) {
+  return {
+    backGif: `${SPRITES}/other/showdown/back/${spriteId}.gif`,
+    backPng: `${SPRITES}/back/${spriteId}.png`,
+    frontGif: `${SPRITES}/other/showdown/${spriteId}.gif`,
+    frontPng: `${SPRITES}/${spriteId}.png`,
+    artwork: `${SPRITES}/other/official-artwork/${spriteId}.png`,
+  };
+}
+
 export const cryUrl = (spriteId: number) => `${CRIES}/${spriteId}.ogg`;
 
 /** Lowercase letters and digits only, as the simulator derives ids from names. */

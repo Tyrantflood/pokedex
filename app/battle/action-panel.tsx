@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { battleSpriteUrls } from "@/lib/battle/ids";
+import { PLACEHOLDER_URL } from "@/lib/battle/sprite-chain";
 import type { ParsedRequest, RequestMon } from "@/lib/battle/protocol";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import type { PokemonType } from "@/lib/pokemon-types";
@@ -157,13 +158,13 @@ function TeamTile({ member, index, enabled, helpers, onChoose }: { member: Reque
 }
 
 function TileSprite({ spriteId }: { spriteId: number }) {
-  const url = spriteId ? battleSpriteUrls(spriteId, "front")[1] : null;
+  // A team tile's little portrait: the static front sprite, or the placeholder if that can't be loaded.
+  const [failed, setFailed] = useState<number | null>(null);
+  const url = spriteId && failed !== spriteId ? battleSpriteUrls(spriteId, "front")[1] : PLACEHOLDER_URL;
   return (
     <span className="grid size-12 place-items-center">
-      {url && (
-        // eslint-disable-next-line @next/next/no-img-element -- small third-party pixel sprite
-        <img src={url} alt="" draggable={false} className="max-h-12 max-w-12 select-none" style={{ imageRendering: "pixelated" }} />
-      )}
+      {/* eslint-disable-next-line @next/next/no-img-element -- small third-party pixel sprite */}
+      <img src={url} alt="" draggable={false} onError={() => setFailed(spriteId)} className="max-h-12 max-w-12 select-none" style={{ imageRendering: url === PLACEHOLDER_URL ? "auto" : "pixelated" }} />
     </span>
   );
 }

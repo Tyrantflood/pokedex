@@ -2,6 +2,7 @@
 
 import { FORMATS } from "@/lib/battle/formats";
 import type { Difficulty } from "@/lib/battle/cpu-player";
+import { TURN_LIMITS } from "@/lib/battle/turn-limit";
 import type { BattleSettings } from "./battle-app";
 
 const DIFFICULTIES: { key: Difficulty; label: string; note: string }[] = [
@@ -73,6 +74,28 @@ export function Lobby({ settings, onChange, onStart }: { settings: BattleSetting
           ))}
         </div>
         <p className="mt-2 text-xs text-zinc-400">{DIFFICULTIES.find((d) => d.key === settings.difficulty)?.note}</p>
+      </fieldset>
+
+      <fieldset>
+        <legend className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Turn limit</legend>
+        <div className="mt-1 grid grid-cols-4 gap-2">
+          {TURN_LIMITS.map((limit) => (
+            <label
+              key={limit}
+              className={`cursor-pointer rounded-xl border p-3 text-center transition-colors has-focus-visible:outline-2 has-focus-visible:outline-teal-300 ${
+                settings.turnLimit === limit ? "border-teal-300/60 bg-teal-300/10" : "border-white/10 bg-zinc-900/60 hover:border-white/25"
+              }`}
+            >
+              <input type="radio" name="turn-limit" value={limit} checked={settings.turnLimit === limit} onChange={() => onChange({ ...settings, turnLimit: limit })} className="sr-only" />
+              <span className="block text-sm font-bold text-white">{limit === 0 ? "Off" : limit}</span>
+            </label>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-zinc-400">
+          {settings.turnLimit === 0
+            ? "No limit: the battle goes on until one side is out of Pokémon (the simulator still ends endless loops)."
+            : `At turn ${settings.turnLimit} the side with more Pokémon left wins, then the higher total HP %; otherwise it's a draw.`}
+        </p>
       </fieldset>
 
       <button

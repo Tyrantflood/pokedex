@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AnimatePresence, motion, useAnimate, useReducedMotion } from "framer-motion";
+import { animate as animateTo, AnimatePresence, motion, useAnimate, useReducedMotion } from "framer-motion";
 import { BANNER_MS, isBigHit } from "@/lib/battle/move-fx";
 import { activeMon, type BattleView, type MonView, type SideId } from "@/lib/battle/protocol";
+import { LogOverlay } from "./battle-log";
 import { FxLayer, MoveBanner } from "./fx/fx-layer";
 import { centerOf, SPOT, type Size } from "./fx/geometry";
 import type { PlayedCue } from "./use-local-battle";
@@ -41,7 +42,7 @@ function shakeKeyframes(amplitude: number, swings: number) {
   return { x, y };
 }
 
-export function BattleField({ view, cue, cues, ownSide = "p1" }: { view: BattleView; cue: PlayedCue | null; cues: PlayedCue[]; ownSide?: SideId }) {
+export function BattleField({ view, cue, cues, turnLimit = 0, ownSide = "p1" }: { view: BattleView; cue: PlayedCue | null; cues: PlayedCue[]; turnLimit?: number; ownSide?: SideId }) {
   const [ref, size, scale] = useFieldSize();
   const enemySide: SideId = ownSide === "p1" ? "p2" : "p1";
   const reduced = useReducedMotion();
@@ -92,7 +93,7 @@ export function BattleField({ view, cue, cues, ownSide = "p1" }: { view: BattleV
       </div>
 
       <div className="absolute left-2 right-2 top-2 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/80">
-        <span className="rounded bg-black/40 px-1.5 py-0.5">Turn {view.turn}</span>
+        <span className={`rounded px-1.5 py-0.5 ${turnLimit && view.turn >= turnLimit - 4 ? "bg-amber-500/40 text-amber-100" : "bg-black/40"}`}>{turnLimit ? `Turn ${view.turn}/${turnLimit}` : `Turn ${view.turn}`}</span>
         {view.weather && <span className="rounded bg-sky-500/30 px-1.5 py-0.5">{weatherName(view.weather)}</span>}
         {view.terrain && <span className="rounded bg-emerald-500/30 px-1.5 py-0.5">{view.terrain}</span>}
         {view.fieldEffects.map((e) => (
@@ -105,7 +106,8 @@ export function BattleField({ view, cue, cues, ownSide = "p1" }: { view: BattleV
       <MoveBanner cue={[...cues].reverse().find((c) => c.kind === "move") ?? null} />
 
       <Plate view={view} side={enemySide} className="left-2 top-9 sm:top-10" own={false} />
-      <Plate view={view} side={ownSide} className="bottom-2 right-2" own />
+      <Plate view={view} side={ownSide} className="bottom-15 right-2 sm:bottom-2" own />
+      <LogOverlay log={view.log} />
     </div>
   );
 }
@@ -141,6 +143,20 @@ function Combatant({ view, side, facing, scale, cue, size }: { view: BattleView;
   const reduced = useReducedMotion();
   const [scope, animate] = useAnimate();
   const lastCue = useRef<number>(0);
+  const outer = useRef<HTMLDivElement>(null);
+
+  // A Pokémon on the field is never left faded out. A switch-in or a hit blink can be cut short (fast clicking, the Fast toggle, a
+  // second cue arriving mid-animation); a moment after anything settles, anything still see-through is put back.
+  const present = !!mon && !mon.fainted;
+  useEffect(() => {
+    if (!present) return;
+    const timer = setTimeout(() => {
+      for (const el of [outer.current, scope.current as HTMLElement | null]) {
+        if (el && Number(getComputedStyle(el).opacity) < 0.99) animateTo(el, { opacity: 1, scale: 1, y: 0, x: 0 }, { duration: 0.15 });
+      }
+    }, 1800);
+    return () => clearTimeout(timer);
+  }, [present, mon?.nickname, mon?.spriteId, cue?.id, scope]);
 
   useEffect(() => {
     if (!cue || cue.id === lastCue.current || reduced || cue.reduced || !scope.current) return;
@@ -186,8 +202,9 @@ function Combatant({ view, side, facing, scale, cue, size }: { view: BattleView;
       <AnimatePresence mode="popLayout">
         {mon && !mon.fainted && (
           <motion.div
+            ref={outer}
             key={`${mon.nickname}:${mon.spriteId}`}
-            initial={reduced ? false : { scale: 0.2, opacity: 0, y: 12 }}
+            initial={reduced ? false : { scale: 0.2, opacity: 0.3, y: 12 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={reduced ? { opacity: 0 } : { opacity: 0, y: 36, scale: 0.85, transition: { duration: 0.55 } }}
             transition={{ type: "spring", stiffness: 260, damping: 20 }}

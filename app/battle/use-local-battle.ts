@@ -14,6 +14,8 @@ export interface BattleConfig {
   format: BattleFormat;
   difficulty: Difficulty;
   playerName: string;
+  /** 0 = no limit. */
+  turnLimit: number;
 }
 
 export interface PlayedCue extends Cue {

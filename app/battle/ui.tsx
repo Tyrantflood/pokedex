@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { battleSpriteUrls, type Facing } from "@/lib/battle/ids";
+import type { Facing } from "@/lib/battle/ids";
+import { useSprite } from "./use-sprite";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import type { PokemonType } from "@/lib/pokemon-types";
 
@@ -44,28 +44,35 @@ export function HpBar({ fraction, className = "" }: { fraction: number; classNam
 }
 
 /**
- * A Pokémon's picture: the animated Showdown sprite, then the pixel sprite, then nothing. Shown at its native pixel size times
- * `scale` (Showdown draws every species at one pixel density, so a Wailord really is bigger than a Joltik).
+ * A Pokémon's picture, found through the fallback chain in lib/battle/sprite-chain.ts: animated, static, a flipped front view,
+ * artwork, placeholder. It is never invisible: while the first picture loads (the animated GIFs can take seconds) the static sprite
+ * or a placeholder is shown, and the GIF replaces it on arrival. Pixel sprites are drawn at their native size times `scale`
+ * (Showdown draws every species at one pixel density, so a Wailord really is bigger than a Joltik); artwork is fitted to a similar height.
  */
 export function SpriteImage({ spriteId, facing, scale, alt, className = "" }: { spriteId: number; facing: Facing; scale: number; alt: string; className?: string }) {
-  const urls = battleSpriteUrls(spriteId, facing);
-  const [attempt, setAttempt] = useState({ id: spriteId, index: 0 });
-  const [size, setSize] = useState<{ id: number; w: number; h: number } | null>(null);
-  const index = attempt.id === spriteId ? attempt.index : 0;
-  const url = urls[index];
-  const known = size && size.id === spriteId ? size : null;
-  if (!url) return <span className="grid size-16 place-items-center rounded-full bg-black/30 text-xl text-white/60" aria-label={alt}>?</span>;
+  const { candidate, size, waiting } = useSprite(spriteId, facing);
+  let width: number;
+  let height: number;
+  if (candidate.kind === "artwork" && size) {
+    height = 90 * scale;
+    width = height * (size.w / size.h);
+  } else if (size && candidate.kind !== "placeholder") {
+    width = size.w * scale;
+    height = size.h * scale;
+  } else {
+    width = height = 60 * scale;
+  }
+  const pixel = candidate.kind === "gif" || candidate.kind === "png";
   return (
     // eslint-disable-next-line @next/next/no-img-element -- animated GIFs from a third-party CDN; next/image would freeze them
     <img
-      key={url}
-      src={url}
+      key={candidate.url}
+      src={candidate.url}
       alt={alt}
       draggable={false}
-      onLoad={(e) => setSize({ id: spriteId, w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
-      onError={() => setAttempt({ id: spriteId, index: index + 1 })}
-      style={{ imageRendering: "pixelated", width: known ? known.w * scale : undefined, height: known ? known.h * scale : undefined, opacity: known ? 1 : 0 }}
-      className={`max-w-none select-none ${className}`}
+      data-sprite={candidate.id}
+      style={{ imageRendering: pixel ? "pixelated" : "auto", width, height, transform: candidate.flip ? "scaleX(-1)" : undefined, opacity: waiting ? 0.55 : 1 }}
+      className={`max-w-none select-none ${waiting ? "motion-safe:animate-pulse" : ""} ${className}`}
     />
   );
 }

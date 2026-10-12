@@ -10,6 +10,7 @@ import { makeLookups } from "./dex-facts";
 import type { BattleFormat } from "./formats";
 import { parseRequest, type Lookups, type ParsedRequest } from "./protocol";
 import { generateTeam, randomSeed } from "./teams";
+import { adjudicate } from "./turn-limit";
 
 export type { Difficulty } from "./cpu-player";
 
@@ -46,13 +47,18 @@ export interface LocalBattleOptions {
   format: BattleFormat;
   difficulty: Difficulty;
   playerName: string;
+  /** End the battle after this many turns and decide it (see turn-limit.ts); 0 or absent for no limit. The simulator's own protections stay on either way. */
+  turnLimit?: number;
 }
 
 export function startLocalBattle(options: LocalBattleOptions, onMessage: (message: BattleMessage) => void): LocalBattle {
   const { format, difficulty, playerName } = options;
+  const turnLimit = options.turnLimit ?? 0;
   const dex: ModdedDex = Dex.forFormat(format.formatId.split("@@@")[0]);
   const lookups = makeLookups(dex);
-  const streams = BattleStreams.getPlayerStreams(new BattleStreams.BattleStream());
+  const battleStream = new BattleStreams.BattleStream();
+  const streams = BattleStreams.getPlayerStreams(battleStream);
+  const cpuNameFor = difficulty === "easy" ? "CPU (Easy)" : "CPU (Normal)";
 
   const cpuSeed = Math.floor(Math.random() * 0xffffffff);
   const cpu = new CpuPlayer(streams.p2, "p2", dex, difficulty, cpuSeed);
@@ -65,10 +71,23 @@ export function startLocalBattle(options: LocalBattleOptions, onMessage: (messag
       const lines: string[] = [];
       let request: ParsedRequest | null = null;
       let error: string | null = null;
+      let limitReached = false;
       for (const line of chunk.split("\n")) {
-        if (line.startsWith("|request|")) request = parseRequest(JSON.parse(line.slice("|request|".length)));
+        // The turn after the limit never starts: this is where the limit ends the battle.
+        if (turnLimit > 0 && line === `|turn|${turnLimit + 1}`) limitReached = true;
+        else if (line.startsWith("|request|")) request = parseRequest(JSON.parse(line.slice("|request|".length)));
         else if (line.startsWith("|error|")) error = line.slice("|error|".length);
         else if (line) lines.push(line);
+      }
+      if (limitReached) {
+        const sides = battleStream.battle?.sides;
+        if (sides) {
+          const tally = (i: number, name: string) => ({ name, pokemon: sides[i].pokemon.map((p) => ({ hp: p.hp, maxHp: p.maxhp, fainted: p.fainted })) });
+          const verdict = adjudicate(tally(0, playerName), tally(1, cpuNameFor), turnLimit);
+          lines.push(`|-message|${verdict.message}`);
+          void streams.omniscient.write(verdict.winner ? `>forcewin ${verdict.winner}` : ">forcetie");
+          request = null; // the battle is over: no more choices
+        }
       }
       onMessage({ lines, request, error });
     }
@@ -80,7 +99,7 @@ export function startLocalBattle(options: LocalBattleOptions, onMessage: (messag
 
   const spec = { formatid: format.formatId, seed: randomSeed() };
   const packedTeam = () => Teams.pack(generateTeam(format, randomSeed()));
-  const cpuName = difficulty === "easy" ? "CPU (Easy)" : "CPU (Normal)";
+  const cpuName = cpuNameFor;
   void streams.omniscient.write(
     `>start ${JSON.stringify(spec)}\n` +
       `>player p1 ${JSON.stringify({ name: playerName, team: packedTeam() })}\n` +
