@@ -6,6 +6,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, us
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { PokemonSummary } from "@/lib/summary";
 import { addMember, emptyTeam, removeMember, slotOf, teamMembers, type Candidate, type Team } from "@/lib/team";
+import { ScannerLink } from "../scanner-link";
 import { CompareTray } from "./compare-tray";
 import { CompareView } from "./compare-view";
 import { Controls } from "./controls";
@@ -302,6 +303,9 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
         <div className="mb-3 flex items-baseline gap-3">
           <h1 className="text-3xl font-bold tracking-tight">Pokédex</h1>
           <span className="font-mono text-xs uppercase tracking-widest text-teal-300/70">Dex-Link</span>
+          <div className="ml-auto self-center">
+            <ScannerLink href="/battle">Battle</ScannerLink>
+          </div>
         </div>
         <Controls
           query={query}

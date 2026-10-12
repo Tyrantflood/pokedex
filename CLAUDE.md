@@ -261,8 +261,9 @@ The Vercel layout is assumed from the Build Output API, not observed.
 
 ## Battle section (`/battle`): plan and spike findings (2026-10-12)
 
-Private Showdown-style battler for the owner and friends, not linked from the Pokédex, behind a shared passcode, guest sign-in by name. Hard requirement: **costs nothing, no payment card**.
-Order of work: spike (done), CPU battles in the browser + battle UI (**done**, see "Battle UI and CPU" below), passcode/token, room server, invites (commit and push after each). v1 uses random teams only (custom sets are a later step; see Team builder).
+Showdown-style battler: CPU battles open to everyone, friend battles private through their invite links. Guest sign-in by name only. Hard requirement: **costs nothing, no payment card**.
+**There is no passcode** (the original plan to gate `/battle` was dropped on purpose): the Pokédex header has a "Battle" link (`app/scanner-link.tsx`, shared with the "Back to Pokédex" link on `/battle`), and `/battle` is public and indexable. A friend battle is private only because its room code is long and unguessable (generate it from a CSPRNG, 10+ base32 characters) and a room takes exactly two players; there is no shared secret or signed token to build.
+Order of work: spike (done), CPU battles in the browser + battle UI (**done**, see "Battle UI and CPU" below), room server, invites (commit and push after each). v1 uses random teams only (custom sets are a later step; see Team builder).
 
 - **PartyKit's hosted platform is shutting down** (deploys off 16 Oct 2026, platform deleted 23 Oct; `partykit deploy` to your own Cloudflare account also stops). Use **`partyserver` + `partysocket` deployed with `wrangler`** to our own Cloudflare account instead. Do not use `partykit`.
 - **Cloudflare free plan fits.** Durable Objects are on the Workers Free plan (SQLite-backed only): 100,000 requests/day, 13,000 GB-s/day, 5 M rows read and 100 k rows written/day, 5 GB storage; incoming WebSocket messages count 20:1. A battle is a few hundred messages. The Workers limits page lists the Worker size as 64 MiB uncompressed; an older 3 MB figure may still be quoted, and the sim bundle fits either way (below). Whether sign-up needs a card was **not** confirmed from official docs; check at sign-up. If it does, the fallback is WebRTC peer-to-peer with the host's browser running the battle.

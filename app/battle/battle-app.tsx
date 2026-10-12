@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { ScannerLink } from "../scanner-link";
 import { formatByKey } from "@/lib/battle/formats";
 import type { Difficulty } from "@/lib/battle/cpu-player";
 import { ActionPanel } from "./action-panel";
@@ -43,10 +43,8 @@ export function BattleApp() {
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 pb-10 pt-4">
-      <nav className="flex items-center justify-between text-sm">
-        <Link href="/" className="text-zinc-400 underline-offset-4 hover:text-white hover:underline">
-          ← Pokédex
-        </Link>
+      <nav className="flex items-center justify-between">
+        <ScannerLink href="/">Back to Pokédex</ScannerLink>
       </nav>
       {run ? (
         // Keyed by run, so "Rematch" mounts a fresh battle.

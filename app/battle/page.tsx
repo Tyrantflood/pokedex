@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import { BattleApp } from "./battle-app";
 
-// A private area: kept out of search results (and, by design, not linked from the Pokédex).
 export const metadata: Metadata = {
   title: "Battle",
-  robots: { index: false, follow: false },
+  description: "Random-team Pokémon battles against a CPU, right in the browser: National Dex or any single generation.",
 };
 
 export default function BattlePage() {
