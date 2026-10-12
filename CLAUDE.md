@@ -8,6 +8,10 @@ docs for the installed version are in `node_modules/next/dist/docs/`. Cache Comp
 (`cacheComponents: true`), so caching uses `"use cache"` + `cacheLife`, and `params`/`id` props are
 promises.
 
+## Git workflow
+
+Commit and push straight to the default branch unless the owner asks for a branch. In this repo that branch is named `master` (there is no `main`).
+
 ## Commands
 
 - `npm run dev` / `npm run build` / `npm run start` (`npx next start -H 0.0.0.0 -p 3000` to reach it from a phone).
