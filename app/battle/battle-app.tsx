@@ -8,6 +8,8 @@ import { ActionPanel } from "./action-panel";
 import { BattleField } from "./battle-field";
 import { BattleLog } from "./battle-log";
 import { Lobby } from "./lobby";
+import { isLastStand } from "@/lib/battle/music-data";
+import { useBattleMusic } from "./use-battle-music";
 import { useLocalBattle, type BattleConfig } from "./use-local-battle";
 import { useStored } from "./use-stored";
 
@@ -20,6 +22,8 @@ export interface BattleSettings {
 const DEFAULTS: BattleSettings = { name: "", formatKey: "natdex", difficulty: "normal" };
 const SETTINGS_KEY = "battle:settings";
 const MUTED_KEY = "battle:muted";
+const MUSIC_KEY = "battle:music";
+const VOLUME_KEY = "battle:music-volume";
 
 function parseSettings(raw: string): BattleSettings {
   try {
@@ -67,6 +71,19 @@ function BattleScreen({ config, onRematch, onLeave }: { config: BattleConfig; on
 
   const toggleMute = () => setMutedRaw(muted ? "0" : "1");
 
+  // Music: on by default, volume 0..100 (default 60), both remembered. It only starts once a battle is under way.
+  const [musicRaw, setMusicRaw] = useStored(MUSIC_KEY);
+  const [volumeRaw, setVolumeRaw] = useStored(VOLUME_KEY);
+  const musicOn = musicRaw !== "0";
+  const volumePercent = volumeRaw === "" || Number.isNaN(Number(volumeRaw)) ? 60 : Math.max(0, Math.min(100, Number(volumeRaw)));
+  useBattleMusic({
+    enabled: musicOn,
+    volume: volumePercent / 100,
+    playing: state.status === "playing" || state.status === "over",
+    mode: isLastStand(view.sides.p1) && !over ? "intense" : "normal",
+    outcome: view.winner === null ? null : view.winner === config.playerName ? "win" : "lose",
+  });
+
   return (
     <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
       <div className="min-w-0 space-y-3">
@@ -74,9 +91,25 @@ function BattleScreen({ config, onRematch, onLeave }: { config: BattleConfig; on
           <div className="text-sm text-zinc-300">
             <span className="font-bold text-white">{config.format.label}</span> · CPU {config.difficulty === "easy" ? "Easy" : "Normal"}
           </div>
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <ToggleButton pressed={fast} onClick={() => setFast((f) => !f)} label="Fast" />
-            <ToggleButton pressed={muted} onClick={toggleMute} label={muted ? "Sound off" : "Sound on"} />
+            <ToggleButton pressed={!muted} onClick={toggleMute} label="Cries" />
+            <ToggleButton pressed={musicOn} onClick={() => setMusicRaw(musicOn ? "0" : "1")} label="Music" />
+            <label className="flex items-center gap-1.5 text-zinc-400">
+              <span className="sr-only">Music volume</span>
+              <span aria-hidden>Vol</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={volumePercent}
+                onChange={(e) => setVolumeRaw(e.target.value)}
+                aria-valuetext={`${volumePercent} percent`}
+                disabled={!musicOn}
+                className="h-1 w-20 cursor-pointer accent-teal-300 disabled:cursor-not-allowed disabled:opacity-40"
+              />
+            </label>
             {!over && state.status === "playing" && (
               <button
                 type="button"

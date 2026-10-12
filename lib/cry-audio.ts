@@ -157,6 +157,7 @@ export async function playCry(url: string): Promise<CryPlayback> {
       // (now silent) signal; disconnecting it would freeze it on its last samples.
       source.disconnect();
       if (current === playback) current = null;
+      if (current === null) announce(false);
       resolve();
     };
   });
@@ -176,5 +177,19 @@ export async function playCry(url: string): Promise<CryPlayback> {
   };
   current = playback;
   source.start();
+  announce(true);
   return playback;
+}
+
+const playingListeners = new Set<(playing: boolean) => void>();
+function announce(playing: boolean) {
+  playingListeners.forEach((listener) => listener(playing));
+}
+
+/** Tells `listener` when a cry starts and when it ends (the battle music lowers itself meanwhile). Returns the unsubscribe function. */
+export function onCryPlaying(listener: (playing: boolean) => void): () => void {
+  playingListeners.add(listener);
+  return () => {
+    playingListeners.delete(listener);
+  };
 }
