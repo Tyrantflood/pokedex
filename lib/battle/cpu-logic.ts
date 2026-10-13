@@ -1,12 +1,18 @@
 /**
  * How the "Normal" CPU thinks. Pure functions over plain facts (no simulator import), so they can be unit tested.
- * Type maths is the site's own chart (lib/type-chart.ts), the same one the Pokédex uses.
+ *
+ * Type matchups come in through `TypeMath`, built from the simulator's own data for the format's generation (dex-facts.ts
+ * `dexTypeMath`), not from the site's modern chart: Gen 1 has Ghost doing nothing to Psychic, Gens 2-5 have Steel resisting Ghost and
+ * Dark, and so on. For Gen 6 and later the two agree (a test keeps it so).
  *
  * What it knows is what a human opponent would: its own team in full, and of the other side only the species on the field
- * (so types), HP percentage, status and stat changes. It never reads the player's moves, items or bench.
+ * (so types), HP percentage, status, stat changes, and an ability once it has been shown (Levitate after a Ground move fails).
  */
-import { effectiveness } from "../type-chart";
-import type { PokemonType } from "../pokemon-types";
+
+/** Damage multiplier of one attacking type against a (possibly dual-typed) defender in the battle's generation: 0, 0.25, 0.5, 1, 2, 4. */
+export interface TypeMath {
+  multiplier(attack: string, defenders: string[]): number;
+}
 
 export interface MoveFacts {
   id: string;
@@ -31,6 +37,9 @@ export interface MoveFacts {
   /** A side condition it sets on the target's side (Stealth Rock), if any. */
   hazard: string | null;
   protects: boolean;
+  /** Sound-based (Soundproof stops it) and ball/bomb (Bulletproof stops it). */
+  sound?: boolean;
+  bullet?: boolean;
 }
 
 export interface FighterFacts {
@@ -41,6 +50,10 @@ export interface FighterFacts {
   boostLevels: number;
   atk?: number;
   spa?: number;
+  /** The foe's ability, only once it has been revealed in the battle. */
+  ability?: string | null;
+  /** The user's own ability ignores the target's (Mold Breaker, Teravolt, Turboblaze). */
+  ignoresAbilities?: boolean;
 }
 
 /** Statuses a type is immune to, regardless of the move's own type. */
@@ -52,17 +65,52 @@ const STATUS_IMMUNE: Record<string, string[]> = {
   frz: ["ice"],
 };
 
-const asTypes = (types: string[]) => types as PokemonType[];
-const typeMultiplier = (attack: string, defenders: string[]) => effectiveness(attack as PokemonType, asTypes(defenders));
-
 export const NO_GOOD_MOVE = -1000;
 
-/** Higher is better; `NO_GOOD_MOVE` for a move that can't affect the target. */
-export function scoreMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, foeSideConditions: string[], turn: number): number {
-  if (move.category === "Status") return scoreStatusMove(move, me, foe, foeSideConditions, turn);
+const toId = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-  const eff = typeMultiplier(move.type, foe.types);
-  if (eff === 0) return NO_GOOD_MOVE; // the target is immune
+/** Abilities that make their holder immune to (or absorb) every move of one type, and the first generation where that is so. */
+const TYPE_IMMUNITY_ABILITIES: Record<string, { type: string; fromGen: number }> = {
+  levitate: { type: "ground", fromGen: 3 },
+  flashfire: { type: "fire", fromGen: 3 },
+  wellbakedbody: { type: "fire", fromGen: 9 },
+  waterabsorb: { type: "water", fromGen: 3 },
+  stormdrain: { type: "water", fromGen: 5 }, // in Gen 4 it only redirects, in doubles
+  dryskin: { type: "water", fromGen: 4 },
+  voltabsorb: { type: "electric", fromGen: 3 },
+  lightningrod: { type: "electric", fromGen: 5 },
+  motordrive: { type: "electric", fromGen: 4 },
+  sapsipper: { type: "grass", fromGen: 5 },
+  eartheater: { type: "ground", fromGen: 9 },
+};
+
+/** True when the target's revealed ability makes this move useless against it. */
+export function abilityBlocks(move: MoveFacts, ability: string | null | undefined, gen: number, effectiveness: number): boolean {
+  if (!ability) return false;
+  const id = toId(ability);
+  const immunity = TYPE_IMMUNITY_ABILITIES[id];
+  if (immunity && gen >= immunity.fromGen && immunity.type === move.type) return true;
+  if (id === "soundproof" && move.sound) return true;
+  if (id === "bulletproof" && move.bullet) return true;
+  // Wonder Guard: only super effective hits (and fixed-damage / status effects aren't stopped by it in the way that matters here).
+  if (id === "wonderguard" && move.category !== "Status" && !move.fixedDamage && effectiveness <= 1) return true;
+  return false;
+}
+
+/** The generation a `TypeMath` was built for matters for abilities; carried alongside it. */
+export interface Matchup {
+  math: TypeMath;
+  gen: number;
+}
+
+/** Higher is better; `NO_GOOD_MOVE` for a move that can't affect the target. */
+export function scoreMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, foeSideConditions: string[], turn: number, matchup: Matchup): number {
+  const { math, gen } = matchup;
+  const eff = math.multiplier(move.type, foe.types);
+  const blocked = !me.ignoresAbilities && abilityBlocks(move, foe.ability, gen, eff);
+  if (move.category === "Status") return scoreStatusMove(move, me, foe, foeSideConditions, turn, math, blocked);
+
+  if (eff === 0 || blocked) return NO_GOOD_MOVE; // the target is immune
   const power = move.ohko ? 30 : move.fixedDamage ? 50 : move.basePower || 60;
   const stab = me.types.includes(move.type) ? 1.5 : 1;
   const accuracy = move.accuracy === true ? 1 : move.accuracy / 100;
@@ -80,12 +128,13 @@ export function scoreMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, 
   return score;
 }
 
-function scoreStatusMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, foeSideConditions: string[], turn: number): number {
+function scoreStatusMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, foeSideConditions: string[], turn: number, math: TypeMath, blocked: boolean): number {
   if (move.heals) return me.hpFraction <= 0.5 ? 70 : me.hpFraction < 0.8 ? 4 : 0;
   if (move.inflicts) {
     if (foe.status) return 0;
+    if (blocked) return NO_GOOD_MOVE; // Volt Absorb takes Thunder Wave, Flash Fire takes Will-O-Wisp
     if (STATUS_IMMUNE[move.inflicts]?.some((t) => foe.types.includes(t))) return NO_GOOD_MOVE;
-    if (typeMultiplier(move.type, foe.types) === 0 && move.type !== "normal") return NO_GOOD_MOVE;
+    if (math.multiplier(move.type, foe.types) === 0 && move.type !== "normal") return NO_GOOD_MOVE;
     return move.inflicts === "slp" ? 36 : 28;
   }
   if (move.selfBoost) return me.hpFraction > 0.7 && me.boostLevels < 2 ? 22 : 0;
@@ -95,18 +144,18 @@ function scoreStatusMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, f
 }
 
 /** How well `me` fares against `foe` if both just trade their best hits: > 0 means the matchup favours `me`. */
-export function matchupScore(me: { types: string[]; moveTypes: string[] }, foe: { types: string[]; moveTypes?: string[] }): number {
-  const offence = Math.max(0, ...(me.moveTypes.length ? me.moveTypes : me.types).map((t) => typeMultiplier(t, foe.types) * (me.types.includes(t) ? 1.5 : 1)));
+export function matchupScore(me: { types: string[]; moveTypes: string[] }, foe: { types: string[]; moveTypes?: string[] }, math: TypeMath): number {
+  const offence = Math.max(0, ...(me.moveTypes.length ? me.moveTypes : me.types).map((t) => math.multiplier(t, foe.types) * (me.types.includes(t) ? 1.5 : 1)));
   // The foe's likely attacks are its own types (STAB), since its moves are unknown.
   const threats = foe.moveTypes?.length ? foe.moveTypes : foe.types;
-  const defence = Math.max(0, ...threats.map((t) => typeMultiplier(t, me.types)));
+  const defence = Math.max(0, ...threats.map((t) => math.multiplier(t, me.types)));
   return offence - defence * 1.25;
 }
 
 /** True when the active Pokémon is badly placed: the foe's STAB hits it hard and it has nothing super effective in reply. */
-export function isBadMatchup(me: { types: string[]; moveTypes: string[] }, foe: { types: string[] }): boolean {
-  const incoming = Math.max(0, ...foe.types.map((t) => typeMultiplier(t, me.types)));
-  const outgoing = Math.max(0, ...me.moveTypes.map((t) => typeMultiplier(t, foe.types)));
+export function isBadMatchup(me: { types: string[]; moveTypes: string[] }, foe: { types: string[] }, math: TypeMath): boolean {
+  const incoming = Math.max(0, ...foe.types.map((t) => math.multiplier(t, me.types)));
+  const outgoing = Math.max(0, ...me.moveTypes.map((t) => math.multiplier(t, foe.types)));
   return incoming >= 2 && outgoing < 2;
 }
 
@@ -119,12 +168,12 @@ export interface BenchOption {
 }
 
 /** The bench Pokémon best placed against the foe, or null when nobody is clearly better than `currentScore`. */
-export function bestSwitch(bench: BenchOption[], foe: { types: string[] }, currentScore: number | null): BenchOption | null {
+export function bestSwitch(bench: BenchOption[], foe: { types: string[] }, currentScore: number | null, math: TypeMath): BenchOption | null {
   let best: BenchOption | null = null;
   let bestScore = -Infinity;
   for (const option of bench) {
     if (option.hpFraction <= 0) continue;
-    const score = matchupScore(option, foe) + option.hpFraction * 0.5;
+    const score = matchupScore(option, foe, math) + option.hpFraction * 0.5;
     if (score > bestScore) {
       best = option;
       bestScore = score;

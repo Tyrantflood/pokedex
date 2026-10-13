@@ -51,6 +51,13 @@ export interface BattleState {
 
 const IDLE: BattleState = { status: "loading", error: null, view: createView(), cue: null, cues: [], request: null, refused: null, helpers: null };
 
+/**
+ * How much faster than the base timings (the holds in protocol.ts and the animation lengths in move-fx.ts) each mode plays. Normal is 1.5:
+ * the base timings were a third too slow for a whole battle. Fast is the same 3 as before, so it is now twice as fast as Normal.
+ */
+const NORMAL_SPEED = 1.5;
+const FAST_SPEED = 3;
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export function useLocalBattle(config: BattleConfig | null, options: { muted: boolean; fast: boolean }) {
@@ -96,7 +103,7 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
             if (result.cue?.kind === "move") lastMoveType = result.cue.moveType ?? lastMoveType;
             if (!result.delay) continue;
             const o = optionsRef.current;
-            const speed = o.reducedMotion ? 6 : o.fast ? 3 : 1;
+            const speed = o.reducedMotion ? 6 : o.fast ? FAST_SPEED : NORMAL_SPEED;
             let delay = result.delay;
             let cue: PlayedCue | null = null;
             if (result.cue) {

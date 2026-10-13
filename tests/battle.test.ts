@@ -168,3 +168,11 @@ for (const [key, difficulty] of [
     for (const side of Object.values(view.sides)) for (const mon of side.mons) assert.ok(mon.spriteId > 0, `${mon.species} has a sprite id`);
   });
 }
+
+test("every format carries the Endless Battle Clause: Gens 1-3 and National Dex by themselves, Gens 4-9 by our added rule", () => {
+  for (const format of FORMATS) {
+    const hasItself = ["natdex", "gen3", "gen2", "gen1"].includes(format.key);
+    assert.equal(format.formatId.includes("@@@Endless Battle Clause"), !hasItself, `${format.key}: ${format.formatId}`);
+    assert.ok(!format.formatId.includes("@@@!Endless"), "never switched off");
+  }
+});

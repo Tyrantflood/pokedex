@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BattleStreams, Dex, Teams } from "@pkmn/sim";
-import { CpuPlayer, type Difficulty } from "../lib/battle/cpu-player";
-import { bestSwitch, isBadMatchup, matchupScore, NO_GOOD_MOVE, scoreMove, type FighterFacts, type MoveFacts } from "../lib/battle/cpu-logic";
-import { FORMATS } from "../lib/battle/formats";
-import { generateTeam } from "../lib/battle/teams";
+import type { PokemonSet } from "@pkmn/sim";
+import { CpuPlayer } from "../lib/battle/cpu-player";
+import { abilityBlocks, bestSwitch, isBadMatchup, matchupScore, NO_GOOD_MOVE, scoreMove, type FighterFacts, type Matchup, type MoveFacts } from "../lib/battle/cpu-logic";
+import { dexTypeMath, matchupFor, moveFacts } from "../lib/battle/dex-facts";
+import { applyLine, createView } from "../lib/battle/protocol";
+import { makeLookups } from "../lib/battle/dex-facts";
+import { CHART_TYPES, effectiveness } from "../lib/type-chart";
+import type { PokemonType } from "../lib/pokemon-types";
+
+const dexFor = (formatId: string) => Dex.forFormat(formatId);
+const MODERN: Matchup = matchupFor(dexFor("gen9randombattle"));
 
 const move = (over: Partial<MoveFacts>): MoveFacts => ({
   id: "x",
@@ -26,7 +33,7 @@ const move = (over: Partial<MoveFacts>): MoveFacts => ({
   ...over,
 });
 const fighter = (types: string[], over: Partial<FighterFacts> = {}): FighterFacts => ({ types, hpFraction: 1, status: "", boostLevels: 0, ...over });
-const score = (m: MoveFacts, me: FighterFacts, foe: FighterFacts) => scoreMove(m, me, foe, [], 1);
+const score = (m: MoveFacts, me: FighterFacts, foe: FighterFacts, matchup = MODERN) => scoreMove(m, me, foe, [], 1, matchup);
 
 test("a move the target is immune to is never worth using", () => {
   assert.equal(score(move({ type: "ground" }), fighter(["ground"]), fighter(["flying"])), NO_GOOD_MOVE);
@@ -71,61 +78,231 @@ test("healing waits for low HP; status moves skip an already-statused or immune 
 test("a bad matchup is spotted, and the switch target resists the foe", () => {
   const foe = { types: ["fire"] };
   const me = { types: ["grass"], moveTypes: ["grass"] };
-  assert.equal(isBadMatchup(me, foe), true);
-  assert.equal(isBadMatchup({ types: ["water"], moveTypes: ["water"] }, foe), false);
+  const math = MODERN.math;
+  assert.equal(isBadMatchup(me, foe, math), true);
+  assert.equal(isBadMatchup({ types: ["water"], moveTypes: ["water"] }, foe, math), false);
   const bench = [
     { slot: 2, types: ["grass"], moveTypes: ["grass"], hpFraction: 1 },
     { slot: 3, types: ["water"], moveTypes: ["water"], hpFraction: 1 },
     { slot: 4, types: ["fire"], moveTypes: ["fire"], hpFraction: 0 },
   ];
-  assert.equal(bestSwitch(bench, foe, matchupScore(me, foe))?.slot, 3);
-  assert.equal(bestSwitch([bench[0]], foe, matchupScore(me, foe)), null, "no one better: stay in");
+  assert.equal(bestSwitch(bench, foe, matchupScore(me, foe, math), math)?.slot, 3);
+  assert.equal(bestSwitch([bench[0]], foe, matchupScore(me, foe, math), math), null, "no one better: stay in");
 });
 
-/** One battle between two CPUs; resolves to the winning side. */
-async function battle(format: (typeof FORMATS)[number], p1: Difficulty, p2: Difficulty, seed: number): Promise<"p1" | "p2" | "tie"> {
-  const dex = Dex.forFormat(format.formatId.split("@@@")[0]);
-  const streams = BattleStreams.getPlayerStreams(new BattleStreams.BattleStream());
-  void new CpuPlayer(streams.p1, "p1", dex, p1, seed * 2 + 1).start();
-  void new CpuPlayer(streams.p2, "p2", dex, p2, seed * 2 + 2).start();
-  const result = (async () => {
-    for await (const chunk of streams.omniscient) {
-      for (const line of chunk.split("\n")) {
-        if (line.startsWith("|win|")) return line.slice(5) === "A" ? "p1" : "p2";
-        if (line === "|tie") return "tie"; // not "|tier|", which is a header line
-        if (line.startsWith("|turn|") && Number(line.slice(6)) > 300) return "tie";
-      }
-    }
-    return "tie";
-  })();
-  void streams.omniscient.write(
-    `>start ${JSON.stringify({ formatid: format.formatId, seed: `${seed},2,3,4` })}\n` +
-      `>player p1 ${JSON.stringify({ name: "A", team: Teams.pack(generateTeam(format, `${seed},5,6,7`)) })}\n` +
-      `>player p2 ${JSON.stringify({ name: "B", team: Teams.pack(generateTeam(format, `${seed},8,9,10`)) })}`,
-  );
-  const winner = await result;
-  void streams.omniscient.writeEnd();
-  return winner;
-}
+// ---- the generation's own type chart ----------------------------------------------------------------------------------------
 
-test("the Normal CPU beats the Easy CPU clearly, from either side of the table", async () => {
-  const format = FORMATS[0];
-  let normalWins = 0;
-  let decided = 0;
-  for (let seed = 1; seed <= 12; seed++) {
-    // Same two teams, swapped sides, so team luck is shared.
-    const asP1 = await battle(format, "normal", "easy", seed);
-    const asP2 = await battle(format, "easy", "normal", seed);
-    if (asP1 !== "tie") {
-      decided++;
-      if (asP1 === "p1") normalWins++;
-    }
-    if (asP2 !== "tie") {
-      decided++;
-      if (asP2 === "p2") normalWins++;
+test("from Gen 6 on the simulator's chart is the site's chart, for every type and every typing", () => {
+  const math = dexTypeMath(dexFor("gen9randombattle"));
+  const types = CHART_TYPES;
+  for (const attack of types) {
+    for (const a of types) {
+      assert.equal(math.multiplier(attack, [a]), effectiveness(attack as PokemonType, [a as PokemonType]), `${attack} vs ${a}`);
+      for (const b of types) if (a !== b) assert.equal(math.multiplier(attack, [a, b]), effectiveness(attack as PokemonType, [a, b] as PokemonType[]), `${attack} vs ${a}/${b}`);
     }
   }
-  assert.ok(decided >= 20, `only ${decided} of 24 battles had a winner`);
-  assert.ok(normalWins / decided >= 0.65, `Normal won only ${normalWins} of ${decided}`);
+  assert.equal(math.multiplier("stellar", ["fire"]), 1, "Stellar has no row: neutral");
 });
 
+test("Gen 1's chart differs from the modern one where it matters", () => {
+  const g1 = dexTypeMath(dexFor("gen1randombattle"));
+  const g9 = dexTypeMath(dexFor("gen9randombattle"));
+  assert.equal(g1.multiplier("ghost", ["psychic"]), 0, "Gen 1 bug: Ghost does nothing to Psychic");
+  assert.equal(g9.multiplier("ghost", ["psychic"]), 2);
+  assert.equal(g1.multiplier("bug", ["poison"]), 2);
+  assert.equal(g9.multiplier("bug", ["poison"]), 0.5);
+  assert.equal(g1.multiplier("poison", ["bug"]), 2);
+  assert.equal(g9.multiplier("poison", ["bug"]), 1);
+  assert.equal(g1.multiplier("ice", ["fire"]), 1);
+  assert.equal(g9.multiplier("ice", ["fire"]), 0.5);
+  assert.equal(g1.multiplier("ghost", ["psychic", "water"]), 0, "an immunity on either half is an immunity");
+});
+
+test("Gens 2-5 have Steel resisting Ghost and Dark; Gen 6 stops that", () => {
+  for (const gen of [2, 3, 4, 5]) {
+    const math = dexTypeMath(dexFor(`gen${gen}randombattle`));
+    assert.equal(math.multiplier("ghost", ["steel"]), 0.5, `gen ${gen}`);
+    assert.equal(math.multiplier("dark", ["steel"]), 0.5, `gen ${gen}`);
+  }
+  const g6 = dexTypeMath(dexFor("gen6randombattle"));
+  assert.equal(g6.multiplier("ghost", ["steel"]), 1);
+  assert.equal(g6.multiplier("ghost", ["psychic"]), 2);
+});
+
+test("the same two moves rank differently in Gen 1 and Gen 9 against a Psychic type, and in Gen 5 and Gen 9 against Steel", () => {
+  const facts = (formatId: string, ...ids: string[]) => {
+    const dex = dexFor(formatId);
+    return ids.map((id) => moveFacts(dex, id));
+  };
+  const rank = (formatId: string, ids: string[], me: FighterFacts, foe: FighterFacts) => {
+    const matchup = matchupFor(dexFor(formatId));
+    return facts(formatId, ...ids)
+      .map((m) => ({ id: m.id, score: score(m, me, foe, matchup) }))
+      .sort((a, b) => b.score - a.score)
+      .map((r) => r.id);
+  };
+  const gengar = (stats = { atk: 100, spa: 200 }) => fighter(["ghost", "poison"], stats);
+  // Gen 1: Ghost can't hurt Psychic. Gen 9: it is super effective.
+  assert.deepEqual(rank("gen1randombattle", ["nightshade", "thunderbolt"], gengar(), fighter(["psychic"])), ["thunderbolt", "nightshade"]);
+  assert.equal(score(moveFacts(dexFor("gen1randombattle"), "nightshade"), gengar(), fighter(["psychic"]), matchupFor(dexFor("gen1randombattle"))), NO_GOOD_MOVE);
+  assert.deepEqual(rank("gen9randombattle", ["nightshade", "thunderbolt"], gengar(), fighter(["psychic"])), ["nightshade", "thunderbolt"]);
+  // Gen 5: Steel resists Ghost, so the neutral Thunderbolt beats Shadow Ball. Gen 9: Ghost is neutral and STAB, so Shadow Ball wins.
+  assert.deepEqual(rank("gen5randombattle", ["shadowball", "thunderbolt"], gengar(), fighter(["steel"])), ["thunderbolt", "shadowball"]);
+  assert.deepEqual(rank("gen9randombattle", ["shadowball", "thunderbolt"], gengar(), fighter(["steel"])), ["shadowball", "thunderbolt"]);
+});
+
+// ---- abilities that were shown --------------------------------------------------------------------------------------------
+
+test("revealed immunity abilities make the matching moves useless, in the generations where they do that", () => {
+  const gen = (n: number): Matchup => ({ math: MODERN.math, gen: n });
+  const ground = move({ type: "ground", basePower: 100 });
+  const me = fighter(["ground"]);
+  const withAbility = (ability: string | null) => fighter(["poison"], { ability }); // Poison is weak to Ground: the chart alone says go
+  assert.ok(scoreMove(ground, me, withAbility(null), [], 1, gen(5)) > 100, "unknown ability: the chart rules");
+  assert.equal(scoreMove(ground, me, withAbility("Levitate"), [], 1, gen(5)), NO_GOOD_MOVE);
+  assert.ok(scoreMove(ground, me, withAbility("Levitate"), [], 1, gen(2)) > 100, "no Levitate before Gen 3");
+  assert.equal(scoreMove(ground, me, withAbility("Earth Eater"), [], 1, gen(9)), NO_GOOD_MOVE);
+  assert.ok(scoreMove(ground, me, withAbility("Earth Eater"), [], 1, gen(5)) > 100, "Earth Eater is Gen 9");
+  const table: [string, string, number][] = [
+    ["Flash Fire", "fire", 3],
+    ["Water Absorb", "water", 3],
+    ["Volt Absorb", "electric", 3],
+    ["Dry Skin", "water", 4],
+    ["Motor Drive", "electric", 4],
+    ["Storm Drain", "water", 5],
+    ["Lightning Rod", "electric", 5],
+    ["Sap Sipper", "grass", 5],
+    ["Well-Baked Body", "fire", 9],
+  ];
+  for (const [ability, type, from] of table) {
+    const m = move({ type, basePower: 90 });
+    assert.equal(abilityBlocks(m, ability, from, 1), true, `${ability} vs ${type} in gen ${from}`);
+    assert.equal(abilityBlocks(m, ability, from - 1, 1), false, `${ability} in gen ${from - 1}`);
+    assert.equal(abilityBlocks(move({ type: type === "fire" ? "water" : "fire" }), ability, from, 1), false, `${ability} only stops ${type}`);
+  }
+  // Status moves too: Thunder Wave into a Volt Absorber, Will-O-Wisp into Flash Fire.
+  const twave = move({ type: "electric", category: "Status", basePower: 0, inflicts: "par" });
+  assert.ok(scoreMove(twave, fighter(["normal"]), fighter(["water"]), [], 1, gen(5)) > 0);
+  assert.equal(scoreMove(twave, fighter(["normal"]), fighter(["water"], { ability: "Volt Absorb" }), [], 1, gen(5)), NO_GOOD_MOVE);
+  // Wonder Guard lets only super effective hits through; Soundproof and Bulletproof stop their move groups.
+  assert.equal(abilityBlocks(move({}), "Wonder Guard", 5, 1), true);
+  assert.equal(abilityBlocks(move({}), "Wonder Guard", 5, 2), false);
+  assert.equal(abilityBlocks(move({ sound: true }), "Soundproof", 5, 1), true);
+  assert.equal(abilityBlocks(move({ bullet: true }), "Bulletproof", 6, 1), true);
+  assert.equal(abilityBlocks(move({}), "Soundproof", 5, 1), false);
+  // An ability-ignoring attacker (Mold Breaker) goes ahead anyway.
+  assert.ok(scoreMove(ground, fighter(["ground"], { ignoresAbilities: true }), withAbility("Levitate"), [], 1, gen(5)) > 100);
+});
+
+test("an ability is learned from what it does: an immunity, a reflected hit, an absorbed hit, an activation", () => {
+  const dex = dexFor("gen5randombattle");
+  const lookups = makeLookups(dex);
+  const view = createView();
+  const feed = (line: string) => applyLine(view, line, "p2", lookups);
+  const ability = (side: "p1" | "p2", i: number) => view.sides[side].mons[i].ability;
+  feed("|switch|p1a: Weezing|Weezing, L80|100/100");
+  feed("|switch|p2a: Rhyperior|Rhyperior, L80|100/100");
+  assert.equal(ability("p1", 0), null);
+  feed("|move|p2a: Rhyperior|Earthquake|p1a: Weezing");
+  assert.equal(ability("p1", 0), null, "using a move reveals nothing");
+  feed("|-immune|p1a: Weezing|[from] ability: Levitate");
+  assert.equal(ability("p1", 0), "Levitate");
+  // A reflected hit belongs to the "[of]" Pokémon, not to the one that took the damage.
+  feed("|switch|p1a: Ferrothorn|Ferrothorn, L80|100/100");
+  feed("|-damage|p2a: Rhyperior|80/100|[from] ability: Iron Barbs|[of] p1a: Ferrothorn");
+  assert.equal(ability("p1", 1), "Iron Barbs");
+  assert.equal(ability("p2", 0), null);
+  // An absorbed hit and a plain activation.
+  feed("|switch|p1a: Heatran|Heatran, L80|100/100");
+  feed("|-start|p1a: Heatran|ability: Flash Fire");
+  assert.equal(ability("p1", 2), "Flash Fire");
+  feed("|-activate|p2a: Rhyperior|ability: Lightning Rod");
+  assert.equal(ability("p2", 0), "Lightning Rod");
+  feed("|-heal|p1a: Heatran|100/100|[from] ability: Volt Absorb");
+  assert.equal(ability("p1", 2), "Volt Absorb");
+});
+
+// ---- whole battles with chosen teams: what the CPU actually does -------------------------------------------------------
+
+const set = (species: string, moves: string[], ability = ""): PokemonSet => ({
+  name: species,
+  species,
+  item: "",
+  ability,
+  moves,
+  nature: "",
+  gender: "",
+  evs: { hp: 252, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 },
+  ivs: { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 },
+  level: 100,
+});
+
+/** The moves the Normal CPU (side p2) used against a Pokémon that only ever uses its first move, over a fixed number of turns. */
+async function cpuMoves(formatId: string, cpuSet: PokemonSet, targetSet: PokemonSet, turns: number): Promise<{ used: string[]; cpu: CpuPlayer }> {
+  const dex = dexFor(formatId);
+  const streams = BattleStreams.getPlayerStreams(new BattleStreams.BattleStream());
+  const cpu = new CpuPlayer(streams.p2, "p2", dex, "normal", 11);
+  void cpu.start();
+  const used: string[] = [];
+  let turn = 0;
+  const finished = (async () => {
+    for await (const chunk of streams.p1) {
+      let request = false;
+      for (const line of chunk.split("\n")) {
+        const m = /^\|move\|p2a: [^|]+\|([^|]+)\|/.exec(line);
+        if (m) used.push(m[1]);
+        if (line.startsWith("|turn|")) turn = Number(line.slice(6));
+        if (line.startsWith("|request|")) request = true;
+        if (line.startsWith("|win|") || line === "|tie") return; // not startsWith("|tie"): "|tier|..." is a header line
+      }
+      if (turn > turns) return;
+      if (request) void streams.p1.write("move 1");
+    }
+  })();
+  void streams.omniscient.write(
+    `>start ${JSON.stringify({ formatid: formatId, seed: "1,2,3,4" })}\n` +
+      `>player p1 ${JSON.stringify({ name: "Target", team: Teams.pack([targetSet]) })}\n` +
+      `>player p2 ${JSON.stringify({ name: "CPU", team: Teams.pack([cpuSet]) })}`,
+  );
+  await finished;
+  void streams.omniscient.writeEnd();
+  return { used, cpu };
+}
+
+const count = (used: string[], name: string) => used.filter((u) => u === name).length;
+
+test("in Gen 1 the CPU never throws Ghost moves at a Psychic type, though in Gen 9 it prefers them", async () => {
+  const cpuSet = set("Gengar", ["nightshade", "bodyslam"]);
+  const target = set("Alakazam", ["recover"]);
+  const gen1 = await cpuMoves("gen1randombattle", cpuSet, target, 6);
+  assert.ok(gen1.used.length >= 4, `only ${gen1.used.length} CPU moves in Gen 1`);
+  assert.equal(count(gen1.used, "Night Shade"), 0, `Gen 1: ${gen1.used.join(", ")}`);
+  assert.ok(count(gen1.used, "Body Slam") >= 4);
+  const gen9 = await cpuMoves("gen9randombattle", cpuSet, target, 6);
+  assert.ok(gen9.used.length >= 4);
+  assert.ok(count(gen9.used, "Night Shade") >= 4, `Gen 9: ${gen9.used.join(", ")}`);
+});
+
+test("in Gen 5 the CPU respects Steel resisting Ghost: it goes for the electric move, where Gen 9 prefers Shadow Ball", async () => {
+  const cpuSet = set("Gengar", ["shadowball", "discharge"], "Levitate");
+  const target = set("Registeel", ["recover"], "Clear Body");
+  const gen5 = await cpuMoves("gen5randombattle", cpuSet, target, 8);
+  assert.ok(gen5.used.length >= 6, `only ${gen5.used.length} CPU moves`);
+  assert.ok(count(gen5.used, "Discharge") >= 5, `Gen 5: ${gen5.used.join(", ")}`);
+  const gen9 = await cpuMoves("gen9randombattle", cpuSet, target, 8);
+  assert.ok(gen9.used.length >= 6);
+  assert.ok(count(gen9.used, "Shadow Ball") >= 5, `Gen 9: ${gen9.used.join(", ")}`);
+});
+
+test("after Levitate has stopped an Earthquake the CPU stops using it, and not before", async () => {
+  const cpuSet = set("Rhyperior", ["earthquake", "stoneedge"], "Solid Rock");
+  const levitating = set("Weezing", ["recover"], "Levitate");
+  const { used, cpu } = await cpuMoves("gen5randombattle", cpuSet, levitating, 7);
+  assert.ok(used.length >= 5, `only ${used.length} CPU moves`);
+  assert.equal(used[0], "Earthquake", "nothing has shown the ability yet: the chart says Ground beats Poison");
+  assert.equal(count(used.slice(1), "Earthquake"), 0, `it kept using Earthquake: ${used.join(", ")}`);
+  assert.equal(cpu.view.sides.p1.mons[0].ability, "Levitate");
+  // The same battle against a Weezing without Levitate (Gen 5 has only Levitate, so use Gen 4's Stench): Earthquake all the way.
+  const stench = await cpuMoves("gen5randombattle", cpuSet, set("Weezing", ["recover"], "Stench"), 7);
+  assert.ok(count(stench.used, "Earthquake") >= stench.used.length - 1, stench.used.join(", "));
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { animate as animateTo, AnimatePresence, motion, useAnimate, useReducedMotion } from "framer-motion";
 import { BANNER_MS, isBigHit } from "@/lib/battle/move-fx";
 import { activeMon, type BattleView, type MonView, type SideId } from "@/lib/battle/protocol";
@@ -72,6 +72,8 @@ export function BattleField({ view, cue, cues, turnLimit = 0, ownSide = "p1" }: 
       className="relative aspect-square w-full overflow-hidden rounded-2xl border border-white/10 bg-linear-to-b from-sky-900/70 via-slate-800 to-emerald-950 sm:aspect-16/10"
       role="img"
       aria-label={`Battle field. ${describe(view, ownSide)}`}
+      // The HP bars drain in step with the current speed (700 ms at the base timings), so a bar is done before the next line plays.
+      style={{ "--hp-ms": `${Math.round(700 * (cue?.timeScale ?? 1))}ms` } as CSSProperties}
     >
       <div ref={stage} className="absolute inset-0">
         {/* ground, and a platform under each side */}

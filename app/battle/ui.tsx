@@ -38,7 +38,7 @@ export function HpBar({ fraction, className = "" }: { fraction: number; classNam
   return (
     <div className={`h-2 overflow-hidden rounded-full bg-black/60 ring-1 ring-white/10 ${className}`} role="presentation">
       {/* scaleX instead of width: the bar animates on the compositor and never re-lays-out the plate. */}
-      <div className={`h-full w-full origin-left transition-transform duration-700 ease-out motion-reduce:transition-none ${color}`} style={{ transform: `scaleX(${f})` }} />
+      <div className={`h-full w-full origin-left transition-transform ease-out motion-reduce:transition-none ${color}`} style={{ transform: `scaleX(${f})`, transitionDuration: "var(--hp-ms, 700ms)" }} />
     </div>
   );
 }
@@ -50,7 +50,7 @@ export function HpBar({ fraction, className = "" }: { fraction: number; classNam
  * (Showdown draws every species at one pixel density, so a Wailord really is bigger than a Joltik); artwork is fitted to a similar height.
  */
 export function SpriteImage({ spriteId, facing, scale, alt, className = "" }: { spriteId: number; facing: Facing; scale: number; alt: string; className?: string }) {
-  const { candidate, size, waiting } = useSprite(spriteId, facing);
+  const { candidate, size, waiting, fit } = useSprite(spriteId, facing);
   let width: number;
   let height: number;
   if (candidate.kind === "artwork" && size) {
@@ -63,16 +63,30 @@ export function SpriteImage({ spriteId, facing, scale, alt, className = "" }: { 
     width = height = 60 * scale;
   }
   const pixel = candidate.kind === "gif" || candidate.kind === "png";
+  const image = {
+    imageRendering: pixel ? ("pixelated" as const) : ("auto" as const),
+    opacity: waiting ? 0.55 : 1,
+  };
+  // The box is what the layout sees. While a static sprite waits for its GIF the box is the GIF's size and the sprite is drawn scaled to
+  // fill it (fit), so the swap changes the picture and nothing else. A mirrored front view is mirrored as a whole box.
+  const box = fit ? { width: fit.box.w * scale, height: fit.box.h * scale } : { width, height };
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- animated GIFs from a third-party CDN; next/image would freeze them
-    <img
-      key={candidate.url}
-      src={candidate.url}
-      alt={alt}
-      draggable={false}
-      data-sprite={candidate.id}
-      style={{ imageRendering: pixel ? "pixelated" : "auto", width, height, transform: candidate.flip ? "scaleX(-1)" : undefined, opacity: waiting ? 0.55 : 1 }}
-      className={`max-w-none select-none ${waiting ? "motion-safe:animate-pulse" : ""} ${className}`}
-    />
+    <span data-sprite-box style={{ display: "block", position: "relative", ...box, transform: candidate.flip ? "scaleX(-1)" : undefined }}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- animated GIFs from a third-party CDN; next/image would freeze them */}
+      <img
+        key={candidate.url}
+        src={candidate.url}
+        alt={alt}
+        draggable={false}
+        data-sprite={candidate.id}
+        data-fit={fit ? "true" : undefined}
+        style={
+          fit
+            ? { ...image, position: "absolute", left: fit.left * scale, top: fit.top * scale, width: fit.width * scale, height: fit.height * scale }
+            : { ...image, width, height }
+        }
+        className={`max-w-none select-none ${waiting ? "motion-safe:animate-pulse" : ""} ${className}`}
+      />
+    </span>
   );
 }

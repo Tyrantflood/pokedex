@@ -10,7 +10,8 @@
     "lint": "eslint",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests/**/*.test.ts\"",
     "snapshot": "node scripts/snapshot-pokeapi.mjs",
-    "postbuild": "node scripts/check-built-css.mjs"
+    "postbuild": "node scripts/check-built-css.mjs",
+    "test:strength": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests-slow/**/*.test.ts\""
   },
   "dependencies": {
     "@pkmn/randoms": "0.10.11",

@@ -277,6 +277,18 @@ export function applyLine(view: BattleView, line: string, ownSide: SideId, looku
   const arg = (i: number) => parts[i + 1] ?? "";
   const quiet: LineResult = { delay: 0 };
 
+  // An ability shown by what it did ("[from] ability: Levitate" on an immunity, "|-activate|p2a: X|ability: Flash Fire"): from now on
+  // the Pokémon's ability is known. The owner is the "[of]" Pokémon if there is one (Rough Skin hurting the attacker), else the first.
+  const shown = /\[from\] ability: ([^|]+)/.exec(line) ?? (/^(-activate|-start|-block|-immune)$/.test(cmd) ? /^ability: (.+)$/.exec(parts[2] ?? "") : null);
+  if (shown) {
+    const ownerText = /\[of\] (p[12][a-z]?: [^|]+)/.exec(line)?.[1] ?? (/^p[12][a-z]?: /.test(parts[1] ?? "") ? parts[1] : null);
+    if (ownerText) {
+      const owner = parseIdent(ownerText);
+      const mon = view.sides[owner.side]?.mons.find((m) => m.nickname === owner.name);
+      if (mon) mon.ability = shown[1].trim();
+    }
+  }
+
   switch (cmd) {
     case "gen":
       view.gen = Number(arg(0)) || view.gen;

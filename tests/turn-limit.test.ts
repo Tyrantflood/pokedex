@@ -105,13 +105,13 @@ test("a battle with a limit ends after that many turns, never showing the next o
   assert.ok(ended >= 3, `only ${ended} of 5 battles reached their limit`);
 });
 
-test("without a limit nothing is cut short, and the limit never touches the simulator's own protection", async () => {
+test("without a limit nothing is cut short, and every format keeps the Endless Battle Clause when a limit is set", async () => {
   const none = await play("gen9", 0);
   assert.ok(!none.lines.some((l) => l.includes("Turn limit reached")));
-  // The simulator's rules are left alone: where it has the Endless Battle Clause (National Dex, Gens 1-3) it still announces it with a limit set.
-  for (const key of ["natdex", "gen3", "gen2", "gen1"]) {
-    const { lines } = await play(key, 2);
-    assert.ok(lines.some((l) => l.startsWith("|rule|Endless Battle Clause")), `${key} lost the Endless Battle Clause`);
+  // The clause is part of every format (Gens 4-9 get it from formats.ts, the rest have it already), and a turn limit of ours must not remove it.
+  for (const format of FORMATS) {
+    const { lines } = await play(format.key, 2);
+    assert.ok(lines.some((l) => l.startsWith("|rule|Endless Battle Clause")), `${format.key} has no Endless Battle Clause with a turn limit set`);
   }
 });
 

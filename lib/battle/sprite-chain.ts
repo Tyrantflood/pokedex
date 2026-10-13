@@ -71,6 +71,12 @@ export interface Shown {
   waiting: boolean;
 }
 
+/** The animated GIF a static stand-in is waiting for: the GIF in the same tier (same view, same flip), if there is one. */
+export function gifCounterpart(tiers: SpriteCandidate[][], candidate: SpriteCandidate): SpriteCandidate | null {
+  if (candidate.kind !== "png") return null;
+  return tiers.find((tier) => tier.some((c) => c.id === candidate.id))?.find((c) => c.kind === "gif") ?? null;
+}
+
 /** What to show before the first update. */
 export const WAITING: Shown = { candidate: placeholder, size: null, waiting: true };
 

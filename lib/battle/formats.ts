@@ -31,7 +31,9 @@ export const FORMATS: BattleFormat[] = [
   ...gens.map((gen) => ({
     key: `gen${gen}`,
     label: `Generation ${gen}`,
-    formatId: `gen${gen}randombattle`,
+    // The simulator's random battle rules for Gens 4-9 lack the Endless Battle Clause that Gens 1-3 and National Dex have; add it so a battle
+    // that can only loop is ended by the simulator itself, with or without a turn limit of ours.
+    formatId: gen >= 4 ? `gen${gen}randombattle@@@Endless Battle Clause` : `gen${gen}randombattle`,
     generator: `gen${gen}randombattle`,
     gen,
     note: MECHANICS[gen] ? `Random battle with ${MECHANICS[gen]}.` : "Random battle.",

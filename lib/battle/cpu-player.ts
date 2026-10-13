@@ -2,8 +2,8 @@
 import { BattleStreams } from "@pkmn/sim";
 import type { ModdedDex } from "@pkmn/sim";
 import { toId } from "./ids";
-import { bestSwitch, isBadMatchup, matchupScore, NO_GOOD_MOVE, scoreMove, type BenchOption, type FighterFacts } from "./cpu-logic";
-import { makeLookups, moveFacts } from "./dex-facts";
+import { bestSwitch, isBadMatchup, matchupScore, NO_GOOD_MOVE, scoreMove, type BenchOption, type FighterFacts, type Matchup } from "./cpu-logic";
+import { makeLookups, matchupFor, moveFacts } from "./dex-facts";
 import {
   activeMon,
   applyLine,
@@ -38,6 +38,8 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
   private readonly dex: ModdedDex;
   private readonly difficulty: Difficulty;
   private readonly lookups: Lookups;
+  /** Type maths from the simulator's data for this generation, and the generation (for which abilities grant immunities). */
+  private readonly matchup: Matchup;
   private readonly random: () => number;
   private lastSwitchTurn = -10;
   private errors = 0;
@@ -48,6 +50,7 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
     this.dex = dex;
     this.difficulty = difficulty;
     this.lookups = makeLookups(dex);
+    this.matchup = matchupFor(dex);
     this.random = seededRandom(seed);
   }
 
@@ -123,7 +126,7 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
 
     if (request.forceSwitch || !request.active) {
       if (!bench.length) return "default";
-      const pick = foeInfo ? bestSwitch(bench, foeInfo, null) : null;
+      const pick = foeInfo ? bestSwitch(bench, foeInfo, null, this.matchup.math) : null;
       return `switch ${(pick ?? this.pick(bench)).slot}`;
     }
 
@@ -139,14 +142,16 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
       boostLevels: Object.values(meView.boosts).reduce((n, v) => n + Math.max(0, v), 0),
       atk: me.stats?.atk,
       spa: me.stats?.spa,
+      ignoresAbilities: ["moldbreaker", "teravolt", "turboblaze"].includes(toId(me.ability ?? "")),
     };
-    const foeFacts: FighterFacts = { types: foe.types, hpFraction: foe.maxHp ? foe.hp / foe.maxHp : 1, status: foe.status, boostLevels: 0 };
+    // The foe's ability counts only once the battle has shown it (Levitate after a Ground move failed, Flash Fire after it absorbed one).
+    const foeFacts: FighterFacts = { types: foe.types, hpFraction: foe.maxHp ? foe.hp / foe.maxHp : 1, status: foe.status, boostLevels: 0, ability: foe.ability };
     const foeConditions = this.view.sides[otherSide(this.side)].conditions.map(toId);
 
     // Leave a bad matchup now and then (never twice in a row, never when trapped).
     const moveTypes = this.damagingTypes(options.moves.map((m) => m.id));
-    if (bench.length && !options.trapped && this.view.turn - this.lastSwitchTurn >= 3 && isBadMatchup({ types: meView.types, moveTypes }, foeInfo!) && this.random() < 0.4) {
-      const target = bestSwitch(bench, foeInfo!, matchupScore({ types: meView.types, moveTypes }, foeInfo!));
+    if (bench.length && !options.trapped && this.view.turn - this.lastSwitchTurn >= 3 && isBadMatchup({ types: meView.types, moveTypes }, foeInfo!, this.matchup.math) && this.random() < 0.4) {
+      const target = bestSwitch(bench, foeInfo!, matchupScore({ types: meView.types, moveTypes }, foeInfo!, this.matchup.math), this.matchup.math);
       if (target) {
         this.lastSwitchTurn = this.view.turn;
         return `switch ${target.slot}`;
@@ -154,7 +159,7 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
     }
 
     const scored = options.moves
-      .map((m, i) => ({ slot: i + 1, score: m.disabled || m.pp === 0 ? NO_GOOD_MOVE * 2 : scoreMove(moveFacts(dex, m.id), meFacts, foeFacts, foeConditions, this.view.turn) }))
+      .map((m, i) => ({ slot: i + 1, score: m.disabled || m.pp === 0 ? NO_GOOD_MOVE * 2 : scoreMove(moveFacts(dex, m.id), meFacts, foeFacts, foeConditions, this.view.turn, this.matchup) }))
       .sort((a, b) => b.score - a.score);
     if (!scored.length) return "move 1";
     let chosen = scored[0];
