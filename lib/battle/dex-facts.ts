@@ -17,6 +17,21 @@ export function makeLookups(dex: ModdedDex): Lookups {
   };
 }
 
+/** Moves whose damage comes from a callback (a share of HP, a random multiple of level) rather than the damage formula. */
+const FIXED_DAMAGE_CALLBACKS = new Set(["superfang", "naturesmadness", "ruination", "guardianofalola", "psywave"]);
+
+/**
+ * Whether the simulator lets this move through a type immunity, read from the move's own data for the generation (never assumed).
+ * Gen 1 marks Night Shade, Seismic Toss, Sonic Boom and Super Fang as ignoring immunities (they hit Normal, Ghost and Psychic types);
+ * from Gen 2 on none of the fixed-damage moves do. Status moves ignore immunities unless the data says otherwise (Thunder Wave does not).
+ */
+function ignoresTypeImmunity(m: ReturnType<ModdedDex["moves"]["get"]>): boolean {
+  const ignore = m.ignoreImmunity;
+  if (ignore === undefined) return m.category === "Status";
+  if (typeof ignore === "object") return !!ignore[m.type];
+  return ignore === true;
+}
+
 export function moveFacts(dex: ModdedDex, id: string): MoveFacts {
   const m = dex.moves.get(id);
   const targetsSelf = m.target === "self" || m.target === "allySide" || m.target === "allyTeam" || m.target === "adjacentAllyOrSelf";
@@ -27,7 +42,8 @@ export function moveFacts(dex: ModdedDex, id: string): MoveFacts {
     basePower: m.basePower,
     accuracy: m.accuracy,
     priority: m.priority,
-    fixedDamage: m.damage === "level" || typeof m.damage === "number",
+    fixedDamage: m.damage === "level" || typeof m.damage === "number" || FIXED_DAMAGE_CALLBACKS.has(m.id),
+    ignoresTypeImmunity: ignoresTypeImmunity(m),
     ohko: !!m.ohko,
     charge: !!m.flags.charge,
     recharge: !!m.flags.recharge,

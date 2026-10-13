@@ -6,6 +6,7 @@ import { loadCry, playCry } from "@/lib/cry-audio";
 import { cryUrl } from "@/lib/battle/ids";
 import type { BattleFormat } from "@/lib/battle/formats";
 import { moveHoldMs, planMove, sequenceLines, type HitFlags, type MoveFx } from "@/lib/battle/move-fx";
+import { speedFor } from "@/lib/battle/speed";
 import { applyLine, cloneView, createView, syncRequest, type BattleView, type Cue, type ParsedRequest } from "@/lib/battle/protocol";
 // Type-only: the simulator itself is loaded with `import()` below, only when a battle starts.
 import type { BattleMessage, Difficulty, LocalBattle } from "@/lib/battle/engine";
@@ -50,13 +51,6 @@ export interface BattleState {
 }
 
 const IDLE: BattleState = { status: "loading", error: null, view: createView(), cue: null, cues: [], request: null, refused: null, helpers: null };
-
-/**
- * How much faster than the base timings (the holds in protocol.ts and the animation lengths in move-fx.ts) each mode plays. Normal is 1.5:
- * the base timings were a third too slow for a whole battle. Fast is the same 3 as before, so it is now twice as fast as Normal.
- */
-const NORMAL_SPEED = 1.5;
-const FAST_SPEED = 3;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -103,7 +97,7 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
             if (result.cue?.kind === "move") lastMoveType = result.cue.moveType ?? lastMoveType;
             if (!result.delay) continue;
             const o = optionsRef.current;
-            const speed = o.reducedMotion ? 6 : o.fast ? FAST_SPEED : NORMAL_SPEED;
+            const speed = speedFor(o);
             let delay = result.delay;
             let cue: PlayedCue | null = null;
             if (result.cue) {

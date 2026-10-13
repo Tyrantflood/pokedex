@@ -129,26 +129,113 @@ test("Gens 2-5 have Steel resisting Ghost and Dark; Gen 6 stops that", () => {
   assert.equal(g6.multiplier("ghost", ["psychic"]), 2);
 });
 
-test("the same two moves rank differently in Gen 1 and Gen 9 against a Psychic type, and in Gen 5 and Gen 9 against Steel", () => {
-  const facts = (formatId: string, ...ids: string[]) => {
-    const dex = dexFor(formatId);
-    return ids.map((id) => moveFacts(dex, id));
-  };
+test("Gen 5 against Steel: the chart makes the CPU prefer the neutral electric move to the resisted Ghost move; Gen 9 reverses it", () => {
   const rank = (formatId: string, ids: string[], me: FighterFacts, foe: FighterFacts) => {
-    const matchup = matchupFor(dexFor(formatId));
-    return facts(formatId, ...ids)
-      .map((m) => ({ id: m.id, score: score(m, me, foe, matchup) }))
+    const dex = dexFor(formatId);
+    const matchup = matchupFor(dex);
+    return ids
+      .map((id) => ({ id, score: score(moveFacts(dex, id), me, foe, matchup) }))
       .sort((a, b) => b.score - a.score)
       .map((r) => r.id);
   };
-  const gengar = (stats = { atk: 100, spa: 200 }) => fighter(["ghost", "poison"], stats);
-  // Gen 1: Ghost can't hurt Psychic. Gen 9: it is super effective.
-  assert.deepEqual(rank("gen1randombattle", ["nightshade", "thunderbolt"], gengar(), fighter(["psychic"])), ["thunderbolt", "nightshade"]);
-  assert.equal(score(moveFacts(dexFor("gen1randombattle"), "nightshade"), gengar(), fighter(["psychic"]), matchupFor(dexFor("gen1randombattle"))), NO_GOOD_MOVE);
-  assert.deepEqual(rank("gen9randombattle", ["nightshade", "thunderbolt"], gengar(), fighter(["psychic"])), ["nightshade", "thunderbolt"]);
-  // Gen 5: Steel resists Ghost, so the neutral Thunderbolt beats Shadow Ball. Gen 9: Ghost is neutral and STAB, so Shadow Ball wins.
-  assert.deepEqual(rank("gen5randombattle", ["shadowball", "thunderbolt"], gengar(), fighter(["steel"])), ["thunderbolt", "shadowball"]);
-  assert.deepEqual(rank("gen9randombattle", ["shadowball", "thunderbolt"], gengar(), fighter(["steel"])), ["shadowball", "thunderbolt"]);
+  const gengar = fighter(["ghost", "poison"], { atk: 100, spa: 200 });
+  assert.deepEqual(rank("gen5randombattle", ["shadowball", "thunderbolt"], gengar, fighter(["steel"])), ["thunderbolt", "shadowball"]);
+  assert.deepEqual(rank("gen9randombattle", ["shadowball", "thunderbolt"], gengar, fighter(["steel"])), ["shadowball", "thunderbolt"]);
+});
+
+test("fixed-damage moves ignore effectiveness and STAB, and only an immunity the simulator enforces can stop them", () => {
+  const gen9 = matchupFor(dexFor("gen9randombattle"));
+  const gen1 = matchupFor(dexFor("gen1randombattle"));
+  const gengar = fighter(["ghost", "poison"], { atk: 100, spa: 200 });
+  const nightShade9 = moveFacts(dexFor("gen9randombattle"), "nightshade");
+  // The same score against a weakness, a neutral target and a resistance: the damage doesn't change.
+  const vs = (types: string[]) => score(nightShade9, gengar, fighter(types), gen9);
+  assert.equal(vs(["psychic"]), vs(["water"]));
+  assert.equal(vs(["psychic"]), vs(["dark"]), "even a resisted Ghost move does the same fixed damage");
+  assert.ok(vs(["psychic"]) > 0);
+  assert.equal(vs(["normal"]), NO_GOOD_MOVE, "but the Normal type is immune to Ghost moves, and from Gen 2 that holds for Night Shade too");
+  // Gen 1 is the exception: its data marks the fixed-damage moves as ignoring immunities, so they work on Normal, Ghost and Psychic types.
+  const dex1 = dexFor("gen1randombattle");
+  for (const id of ["nightshade", "seismictoss", "sonicboom", "superfang"]) assert.equal(moveFacts(dex1, id).ignoresTypeImmunity, true, `${id} in Gen 1`);
+  assert.ok(score(moveFacts(dex1, "nightshade"), gengar, fighter(["normal"]), gen1) > 0);
+  assert.ok(score(moveFacts(dex1, "seismictoss"), fighter(["fighting"]), fighter(["ghost"]), gen1) > 0);
+  assert.ok(score(moveFacts(dex1, "superfang"), fighter(["normal"]), fighter(["ghost"]), gen1) > 0);
+  // ...while an ordinary Ghost move is still stopped by Gen 1's Ghost-vs-Psychic bug.
+  assert.equal(score(moveFacts(dex1, "lick"), gengar, fighter(["psychic"]), gen1), NO_GOOD_MOVE);
+  // From Gen 2 on, none of them ignores an immunity.
+  for (const gen of [2, 3, 4, 5, 6, 7, 8, 9]) {
+    const dex = dexFor(`gen${gen}randombattle`);
+    for (const id of ["nightshade", "seismictoss", "dragonrage", "sonicboom", "superfang", "psywave"]) assert.equal(moveFacts(dex, id).ignoresTypeImmunity, false, `${id} in Gen ${gen}`);
+  }
+  // Moves whose damage is a share of HP or random are fixed-damage too.
+  for (const id of ["superfang", "psywave"]) assert.equal(moveFacts(dex1, id).fixedDamage, true, id);
+  assert.equal(moveFacts(dex1, "tackle").fixedDamage, false);
+  // Status moves ignore immunities unless their data says not to: Confuse Ray (Ghost) works on a Normal type, Thunder Wave does not on Ground.
+  const dex5 = dexFor("gen5randombattle");
+  const gen5 = matchupFor(dex5);
+  assert.ok(score(moveFacts(dex5, "confuseray"), fighter(["normal"]), fighter(["normal"]), gen5) >= 0);
+  assert.equal(moveFacts(dex5, "confuseray").ignoresTypeImmunity, true);
+  assert.equal(score(moveFacts(dex5, "thunderwave"), fighter(["normal"]), fighter(["ground"]), gen5), NO_GOOD_MOVE);
+});
+
+/** Plays one turn in the simulator: does the move damage the target, or is the target immune? The ground truth the CPU's scoring must agree with. */
+async function simulatorSaysDamaged(gen: number, move: string, defender: string): Promise<boolean> {
+  const streams = BattleStreams.getPlayerStreams(new BattleStreams.BattleStream());
+  const lines: string[] = [];
+  const done = (async () => {
+    for await (const chunk of streams.omniscient) {
+      for (const line of chunk.split("\n")) lines.push(line);
+      if (lines.some((l) => l.startsWith("|turn|2"))) return;
+    }
+  })();
+  let over = false;
+  for (const side of [streams.p1, streams.p2]) {
+    void (async () => {
+      for await (const chunk of side) if (!over && chunk.includes("|request|")) void side.write("move 1");
+    })();
+  }
+  void streams.omniscient.write(
+    `>start ${JSON.stringify({ formatid: `gen${gen}randombattle`, seed: "1,2,3,4" })}\n` +
+      `>player p1 ${JSON.stringify({ name: "A", team: Teams.pack([set("Mew", [move])]) })}\n` +
+      `>player p2 ${JSON.stringify({ name: "B", team: Teams.pack([set(defender, ["splash"])]) })}`,
+  );
+  await done;
+  over = true;
+  void streams.omniscient.writeEnd();
+  const turn1 = lines.slice(0, lines.findIndex((l) => l.startsWith("|turn|2")));
+  return turn1.some((l) => l.startsWith("|-damage|p2a")) && !turn1.some((l) => l.startsWith("|-immune|p2a"));
+}
+
+test("the CPU's idea of what a move can hit matches what the simulator does, for the fixed-damage moves in every generation", async () => {
+  // [move, a target the type chart says is immune to it, generations where it exists]
+  const cases: [string, string, number[]][] = [
+    ["nightshade", "Snorlax", [1, 2, 3, 4, 5, 6, 7, 8, 9]], // Ghost vs Normal
+    ["nightshade", "Alakazam", [1, 2, 5, 9]], // Ghost vs Psychic: immune only through Gen 1's chart bug, and then not for Night Shade
+    ["seismictoss", "Gengar", [1, 2, 3, 4, 5, 6, 7, 8, 9]], // Fighting vs Ghost
+    ["sonicboom", "Gengar", [1, 2, 3, 4, 5, 6, 7, 8, 9]], // Normal vs Ghost
+    ["superfang", "Gengar", [1, 2, 3, 4, 5, 6, 7, 8, 9]], // Normal vs Ghost
+    ["dragonrage", "Clefable", [6, 7, 8, 9]], // Dragon vs Fairy
+    ["psywave", "Umbreon", [2, 3, 4, 5, 6, 7, 8, 9]], // Psychic vs Dark
+    ["dragonrage", "Snorlax", [1, 5, 9]], // control: not immune
+    ["lick", "Alakazam", [1, 2, 5, 9]], // an ordinary Ghost move against Psychic: Gen 1's bug makes it immune
+    ["lick", "Snorlax", [1, 5, 9]], // ordinary Ghost vs Normal: immune in every generation
+  ];
+  let checked = 0;
+  let damaged = 0;
+  for (const [moveId, defenderName, gens] of cases) {
+    for (const gen of gens) {
+      const dex = dexFor(`gen${gen}randombattle`);
+      const matchup = matchupFor(dex);
+      const mew = fighter(["psychic"]);
+      const target = fighter(dex.species.get(defenderName).types.map((t) => t.toLowerCase()));
+      const cpuScore = score(moveFacts(dex, moveId), mew, target, matchup);
+      const sim = await simulatorSaysDamaged(gen, moveId, defenderName);
+      checked++;
+      if (sim) damaged++;
+      assert.equal(cpuScore !== NO_GOOD_MOVE, sim, `Gen ${gen}: ${moveId} into ${defenderName}: the simulator ${sim ? "deals damage" : "says immune"}, the CPU scores it ${cpuScore}`);
+    }
+  }
+  assert.ok(checked > 50 && damaged > 8 && checked - damaged > 20, `${checked} checks, ${damaged} damaging: both outcomes must be covered`);
 });
 
 // ---- abilities that were shown --------------------------------------------------------------------------------------------
@@ -271,16 +358,28 @@ async function cpuMoves(formatId: string, cpuSet: PokemonSet, targetSet: Pokemon
 
 const count = (used: string[], name: string) => used.filter((u) => u === name).length;
 
-test("in Gen 1 the CPU never throws Ghost moves at a Psychic type, though in Gen 9 it prefers them", async () => {
+test("in Gen 1 the CPU uses Night Shade on a Normal type, as the simulator lets it; from Gen 2 it never does", async () => {
   const cpuSet = set("Gengar", ["nightshade", "bodyslam"]);
-  const target = set("Alakazam", ["recover"]);
+  const target = set("Snorlax", ["recover"]);
   const gen1 = await cpuMoves("gen1randombattle", cpuSet, target, 6);
   assert.ok(gen1.used.length >= 4, `only ${gen1.used.length} CPU moves in Gen 1`);
-  assert.equal(count(gen1.used, "Night Shade"), 0, `Gen 1: ${gen1.used.join(", ")}`);
-  assert.ok(count(gen1.used, "Body Slam") >= 4);
+  assert.ok(count(gen1.used, "Night Shade") >= 3, `Gen 1: ${gen1.used.join(", ")}`);
+  for (const gen of [2, 5, 9]) {
+    const { used } = await cpuMoves(`gen${gen}randombattle`, cpuSet, target, 6);
+    assert.ok(used.length >= 4, `only ${used.length} CPU moves in Gen ${gen}`);
+    assert.equal(count(used, "Night Shade"), 0, `Gen ${gen}: ${used.join(", ")}`);
+  }
+});
+
+test("in Gen 1 an ordinary Ghost move is never thrown at a Psychic type (Gen 1's chart bug), though Gen 9 prefers it", async () => {
+  const cpuSet = set("Gengar", ["lick", "bodyslam"]);
+  const target = set("Alakazam", ["recover"]);
+  const gen1 = await cpuMoves("gen1randombattle", cpuSet, target, 6);
+  assert.ok(gen1.used.length >= 4);
+  assert.equal(count(gen1.used, "Lick"), 0, `Gen 1: ${gen1.used.join(", ")}`);
   const gen9 = await cpuMoves("gen9randombattle", cpuSet, target, 6);
   assert.ok(gen9.used.length >= 4);
-  assert.ok(count(gen9.used, "Night Shade") >= 4, `Gen 9: ${gen9.used.join(", ")}`);
+  assert.ok(count(gen9.used, "Lick") >= 3, `Gen 9: ${gen9.used.join(", ")}`);
 });
 
 test("in Gen 5 the CPU respects Steel resisting Ghost: it goes for the electric move, where Gen 9 prefers Shadow Ball", async () => {

@@ -22,8 +22,10 @@ export interface MoveFacts {
   /** Percent, or true for moves that never miss. */
   accuracy: number | true;
   priority: number;
-  /** Fixed damage (Seismic Toss) or "level"; the base power doesn't apply. */
+  /** Fixed damage (Seismic Toss, Night Shade, Super Fang): type effectiveness, STAB and the attacking stats don't change it. */
   fixedDamage: boolean;
+  /** The simulator lets this move through a type immunity (Gen 1's fixed-damage moves; most status moves). Read from the move's data. */
+  ignoresTypeImmunity?: boolean;
   ohko: boolean;
   /** Two-turn, recharge or self-destructing moves are worth less than their power suggests. */
   charge: boolean;
@@ -108,10 +110,15 @@ export function scoreMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, 
   const { math, gen } = matchup;
   const eff = math.multiplier(move.type, foe.types);
   const blocked = !me.ignoresAbilities && abilityBlocks(move, foe.ability, gen, eff);
-  if (move.category === "Status") return scoreStatusMove(move, me, foe, foeSideConditions, turn, math, blocked);
+  if (move.category === "Status") return scoreStatusMove(move, me, foe, foeSideConditions, turn, math, blocked, eff);
 
-  if (eff === 0 || blocked) return NO_GOOD_MOVE; // the target is immune
-  const power = move.ohko ? 30 : move.fixedDamage ? 50 : move.basePower || 60;
+  if ((eff === 0 && !move.ignoresTypeImmunity) || blocked) return NO_GOOD_MOVE; // the target is immune
+  if (move.fixedDamage) {
+    // The same damage whatever the matchup, so no effectiveness, no STAB, no stat. A fixed-damage move can still be stopped by the type
+    // chart (from Gen 2 on Night Shade does nothing to a Normal type) unless the simulator says it ignores immunities (Gen 1).
+    return 50 * (move.accuracy === true ? 1 : move.accuracy / 100) * (move.priority > 0 && foe.hpFraction < 0.3 ? 1.6 : 1);
+  }
+  const power = move.ohko ? 30 : move.basePower || 60;
   const stab = me.types.includes(move.type) ? 1.5 : 1;
   const accuracy = move.accuracy === true ? 1 : move.accuracy / 100;
   let score = power * eff * stab * accuracy;
@@ -128,13 +135,13 @@ export function scoreMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, 
   return score;
 }
 
-function scoreStatusMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, foeSideConditions: string[], turn: number, math: TypeMath, blocked: boolean): number {
+function scoreStatusMove(move: MoveFacts, me: FighterFacts, foe: FighterFacts, foeSideConditions: string[], turn: number, _math: TypeMath, blocked: boolean, eff: number): number {
   if (move.heals) return me.hpFraction <= 0.5 ? 70 : me.hpFraction < 0.8 ? 4 : 0;
   if (move.inflicts) {
     if (foe.status) return 0;
     if (blocked) return NO_GOOD_MOVE; // Volt Absorb takes Thunder Wave, Flash Fire takes Will-O-Wisp
     if (STATUS_IMMUNE[move.inflicts]?.some((t) => foe.types.includes(t))) return NO_GOOD_MOVE;
-    if (math.multiplier(move.type, foe.types) === 0 && move.type !== "normal") return NO_GOOD_MOVE;
+    if (eff === 0 && !move.ignoresTypeImmunity) return NO_GOOD_MOVE; // Thunder Wave into a Ground type
     return move.inflicts === "slp" ? 36 : 28;
   }
   if (move.selfBoost) return me.hpFraction > 0.7 && me.boostLevels < 2 ? 22 : 0;
