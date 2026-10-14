@@ -5,7 +5,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { BANNER_MS, isBigHit, typeFx } from "@/lib/battle/move-fx";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import type { PokemonType } from "@/lib/pokemon-types";
-import type { PlayedCue } from "../use-local-battle";
+import type { PlayedCue } from "../use-battle-session";
 import { centerOf, type Point, type Size } from "./geometry";
 import { MoveAnimation } from "./move-animations";
 import { Particles } from "./particles";
@@ -56,7 +56,7 @@ export function FxLayer({ cues, size }: { cues: PlayedCue[]; size: Size }) {
 // Memoised: a cue never changes once played, so a new cue arriving must not re-render the ones still playing out.
 const CueFx = memo(function CueFx({ cue, size, reduced }: { cue: PlayedCue; size: Size; reduced: boolean }) {
   const ts = cue.timeScale;
-  const here = centerOf(cue.side, size);
+  const here = centerOf(cue.side, size, cue.own);
   const unit = Math.max(0.8, Math.min(1.7, size.w / 340));
   const label = cue.label ? <FloatLabel cue={cue} at={here} reduced={reduced} /> : null;
 

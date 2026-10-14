@@ -1,0 +1,15 @@
+{
+  // Friend-battle room server. Deploy with `npm run deploy` in this folder (needs `npx wrangler login` once).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pokedex-battle",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [{ "name": "BattleRoom", "class_name": "BattleRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BattleRoom"] }],
+  "vars": {
+    "ALLOWED_ORIGINS": "*"
+  }
+}

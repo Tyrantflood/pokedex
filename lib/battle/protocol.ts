@@ -687,6 +687,8 @@ export interface RequestMon {
   stats: MonView["stats"];
   teraType: string | null;
   terastallized: string | null;
+  /** Revival Blessing is being used: this is the Pokémon whose turn it is to bring one back. */
+  reviving: boolean;
 }
 
 export interface ParsedRequest {
@@ -695,6 +697,8 @@ export interface ParsedRequest {
   teamPreview: boolean;
   /** The active Pokémon fainted or must switch: pick from the team. */
   forceSwitch: boolean;
+  /** Revival Blessing: the player must pick a *fainted* Pokémon to bring back (with "switch N"), not a healthy one. */
+  reviving: boolean;
   active: ActiveOptions | null;
   team: RequestMon[];
 }
@@ -721,6 +725,7 @@ export function parseRequest(raw: any): ParsedRequest {
       stats: p.stats ?? null,
       teraType: p.teraType ?? null,
       terastallized: p.terastallized || null,
+      reviving: !!p.reviving,
     };
   });
   const a = raw.active?.[0];
@@ -741,6 +746,7 @@ export function parseRequest(raw: any): ParsedRequest {
     wait: !!raw.wait,
     teamPreview: !!raw.teamPreview,
     forceSwitch: Array.isArray(raw.forceSwitch) && raw.forceSwitch.some(Boolean),
+    reviving: team.some((p) => p.reviving),
     active,
     team,
   };

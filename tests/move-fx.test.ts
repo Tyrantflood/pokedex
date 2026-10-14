@@ -183,7 +183,7 @@ test("in real battles, no effectiveness text ever plays before the damage it bel
         if (!request || request.wait) return;
         syncRequest(view, "p1", request, battle.lookups);
         if (request.forceSwitch || !request.active) {
-          const slot = request.team.findIndex((p) => !p.active && !p.fainted);
+          const slot = request.team.findIndex((p) => !p.active && (request.reviving ? p.fainted : !p.fainted));
           battle.choose(slot >= 0 ? `switch ${slot + 1}` : "default");
         } else {
           battle.choose(`move ${Math.max(1, request.active.moves.findIndex((m) => !m.disabled && m.pp !== 0) + 1)}`);

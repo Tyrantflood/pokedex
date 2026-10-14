@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { BattleApp } from "./battle-app";
 
 export const metadata: Metadata = {
@@ -7,5 +8,10 @@ export const metadata: Metadata = {
 };
 
 export default function BattlePage() {
-  return <BattleApp />;
+  // The page reads ?room= (a friend battle's link) in the browser, which needs a Suspense boundary while it is prerendered.
+  return (
+    <Suspense>
+      <BattleApp />
+    </Suspense>
+  );
 }

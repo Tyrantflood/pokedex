@@ -7,9 +7,11 @@ import { cryUrl } from "@/lib/battle/ids";
 import type { BattleFormat } from "@/lib/battle/formats";
 import { moveHoldMs, planMove, sequenceLines, type HitFlags, type MoveFx } from "@/lib/battle/move-fx";
 import { speedFor } from "@/lib/battle/speed";
-import { applyLine, cloneView, createView, syncRequest, type BattleView, type Cue, type ParsedRequest } from "@/lib/battle/protocol";
+import { applyLine, cloneView, createView, syncRequest, type BattleView, type Cue, type ParsedRequest, type SideId } from "@/lib/battle/protocol";
+import type { PlayerStatus, RoomConfig, RoomPhase } from "@/lib/battle/room-protocol";
 // Type-only: the simulator itself is loaded with `import()` below, only when a battle starts.
 import type { BattleMessage, Difficulty, LocalBattle } from "@/lib/battle/engine";
+import type { ConnectionState } from "@/lib/battle/online-engine";
 
 export interface BattleConfig {
   format: BattleFormat;
@@ -18,6 +20,17 @@ export interface BattleConfig {
   /** 0 = no limit. */
   turnLimit: number;
 }
+
+/** A friend battle: which room, who we are, and (for whoever creates it) what kind of battle it is. */
+export interface RoomSpec {
+  host: string;
+  code: string;
+  clientId: string;
+  name: string;
+  create?: RoomConfig;
+}
+
+export type SessionSpec = { kind: "cpu"; config: BattleConfig } | { kind: "online"; room: RoomSpec };
 
 export interface PlayedCue extends Cue {
   /** Changes with every cue, so an effect can replay even when the same kind repeats. */
@@ -34,12 +47,30 @@ export interface PlayedCue extends Cue {
   hit?: HitFlags;
   /** When the cue was played (performance.now()), to drop old ones. */
   at: number;
+  /** Whose side of the battle is "yours": where each Pokémon is drawn depends on it. */
+  own: SideId;
+}
+
+export interface RoomState {
+  code: string;
+  config: RoomConfig;
+  /** The name this player has in the battle. */
+  you: string;
+  phase: RoomPhase;
+  players: PlayerStatus[];
+  connection: ConnectionState;
+  /** When `players` was last reported (Date.now()), so a countdown can run on from it. */
+  statusAt: number;
 }
 
 export interface BattleState {
-  status: "loading" | "playing" | "over" | "error";
+  status: "loading" | "waiting" | "playing" | "over" | "error";
   error: string | null;
+  /** For an error: why (a room server's code such as "full" or "not-found"). */
+  errorCode: string | null;
   view: BattleView;
+  /** Which side is yours (always p1 against the CPU; p1 or p2 in a friend battle). */
+  ownSide: SideId;
   cue: PlayedCue | null;
   /** The last few seconds of cues, still playing out on the field. */
   cues: PlayedCue[];
@@ -48,13 +79,28 @@ export interface BattleState {
   /** The simulator refused the last choice. */
   refused: string | null;
   helpers: Pick<LocalBattle, "moveDetails" | "itemText" | "abilityText" | "lookups"> | null;
+  /** Friend battles: the room, who is in it and whether we are connected. */
+  room: RoomState | null;
 }
 
-const IDLE: BattleState = { status: "loading", error: null, view: createView(), cue: null, cues: [], request: null, refused: null, helpers: null };
+const IDLE: BattleState = {
+  status: "loading",
+  error: null,
+  errorCode: null,
+  view: createView(),
+  ownSide: "p1",
+  cue: null,
+  cues: [],
+  request: null,
+  refused: null,
+  helpers: null,
+  room: null,
+};
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-export function useLocalBattle(config: BattleConfig | null, options: { muted: boolean; fast: boolean }) {
+/** `spec` must be stable (memoise it): a new object starts a new battle. */
+export function useBattleSession(spec: SessionSpec | null, options: { muted: boolean; fast: boolean }) {
   const [state, setState] = useState<BattleState>(IDLE);
   const reducedMotion = useReducedMotion();
   // Read inside the playback loop, which outlives any one render.
@@ -66,7 +112,7 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
   const answered = useRef<ParsedRequest | null>(null);
 
   useEffect(() => {
-    if (!config) return;
+    if (!spec) return;
     let cancelled = false;
     const draft = createView();
     const queue: BattleMessage[] = [];
@@ -75,6 +121,8 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
     let lastMoveType = "normal";
     let recent: PlayedCue[] = [];
     let battle: LocalBattle | null = null;
+    let own: SideId = "p1";
+    let stop: (() => void) | null = null;
 
     const publish = (patch: Partial<BattleState>) => {
       if (!cancelled) setState((s) => ({ ...s, view: cloneView(draft), ...patch }));
@@ -91,9 +139,22 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
             publish({ refused: message.error, request: lastRequest.current });
             continue;
           }
+          if (message.instant) {
+            // Catching up after a refresh or a reconnect: this is the whole log, so start the view afresh and apply it without the show.
+            Object.assign(draft, createView());
+            recent = [];
+            for (const line of message.lines) applyLine(draft, line, own, battle.lookups);
+            if (message.request) {
+              syncRequest(draft, own, message.request, battle.lookups);
+              lastRequest.current = message.request.wait ? null : message.request;
+            } else lastRequest.current = null;
+            answered.current = null;
+            publish({ cue: null, cues: [] });
+            continue;
+          }
           // The simulator reports "super effective" before the damage; play it after the HP bar has moved (see sequenceLines).
           for (const step of sequenceLines(message.lines)) {
-            const result = applyLine(draft, step.line, "p1", battle.lookups);
+            const result = applyLine(draft, step.line, own, battle.lookups);
             if (result.cue?.kind === "move") lastMoveType = result.cue.moveType ?? lastMoveType;
             if (!result.delay) continue;
             const o = optionsRef.current;
@@ -101,7 +162,7 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
             let delay = result.delay;
             let cue: PlayedCue | null = null;
             if (result.cue) {
-              cue = { ...result.cue, id: ++cueId, lastMoveType, timeScale: 1 / speed, reduced: o.reducedMotion, hit: step.hit, at: performance.now() };
+              cue = { ...result.cue, id: ++cueId, lastMoveType, timeScale: 1 / speed, reduced: o.reducedMotion, hit: step.hit, at: performance.now(), own };
               if (cue.kind === "move") {
                 // Banner, then the attack beat: the move line holds for both, so the impact (the damage line) lands right after.
                 cue.fx = planMove({ name: cue.moveName ?? "", type: cue.moveType ?? "normal", category: cue.moveCategory ?? "Status", selfTarget: !!cue.selfTarget });
@@ -119,7 +180,7 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
             await sleep(cue?.kind === "move" && o.reducedMotion ? delay : delay / speed);
           }
           if (message.request) {
-            syncRequest(draft, "p1", message.request, battle.lookups);
+            syncRequest(draft, own, message.request, battle.lookups);
             if (!message.request.wait) lastRequest.current = message.request;
             else lastRequest.current = null;
           }
@@ -132,18 +193,57 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
       }
     };
 
+    const receive = (message: BattleMessage) => {
+      queue.push(message);
+      void pump();
+    };
+
     setState({ ...IDLE });
     lastRequest.current = null;
+    answered.current = null;
     (async () => {
       try {
-        const engine = await import("@/lib/battle/engine");
-        if (cancelled) return;
-        battle = engine.startLocalBattle(config, (message) => {
-          queue.push(message);
-          void pump();
-        });
-        battleRef.current = battle;
-        setState((s) => ({ ...s, helpers: { moveDetails: battle!.moveDetails, itemText: battle!.itemText, abilityText: battle!.abilityText, lookups: battle!.lookups } }));
+        if (spec.kind === "cpu") {
+          const engine = await import("@/lib/battle/engine");
+          if (cancelled) return;
+          battle = engine.startLocalBattle(spec.config, receive);
+          battleRef.current = battle;
+          stop = () => battle?.destroy();
+          setState((s) => ({ ...s, helpers: { moveDetails: battle!.moveDetails, itemText: battle!.itemText, abilityText: battle!.abilityText, lookups: battle!.lookups } }));
+        } else {
+          const online = await import("@/lib/battle/online-engine");
+          if (cancelled) return;
+          const handle = online.startOnlineBattle(spec.room, {
+            onReady(source, welcome) {
+              battle = source;
+              battleRef.current = source;
+              own = welcome.side;
+              setState((s) => ({
+                ...s,
+                ownSide: welcome.side,
+                helpers: { moveDetails: source.moveDetails, itemText: source.itemText, abilityText: source.abilityText, lookups: source.lookups },
+                room: { code: spec.room.code, config: welcome.config, you: welcome.name, phase: "waiting", players: [], connection: "open", statusAt: Date.now() },
+              }));
+              void pump(); // anything that arrived while the source was being made
+            },
+            onMessage: receive,
+            onStatus(status) {
+              if (cancelled) return;
+              setState((s) => ({
+                ...s,
+                status: s.status === "over" ? "over" : status.phase === "waiting" ? "waiting" : s.status === "waiting" || s.status === "loading" ? "playing" : s.status,
+                room: s.room ? { ...s.room, phase: status.phase, players: status.players, statusAt: Date.now() } : s.room,
+              }));
+            },
+            onConnection(connection) {
+              if (!cancelled) setState((s) => ({ ...s, room: s.room ? { ...s.room, connection } : s.room }));
+            },
+            onError(error) {
+              if (!cancelled) setState((s) => ({ ...s, status: "error", error: error.message, errorCode: error.code }));
+            },
+          });
+          stop = handle.destroy;
+        }
       } catch (error) {
         if (!cancelled) setState((s) => ({ ...s, status: "error", error: error instanceof Error ? error.message : "The battle simulator failed to load." }));
       }
@@ -152,9 +252,9 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
     return () => {
       cancelled = true;
       battleRef.current = null;
-      battle?.destroy();
+      stop?.();
     };
-  }, [config]);
+  }, [spec]);
 
   // Cries for the player's team, warmed as soon as it is known.
   const team = state.request?.team;
@@ -168,13 +268,14 @@ export function useLocalBattle(config: BattleConfig | null, options: { muted: bo
   }, [team]);
   useEffect(() => {
     warmed.current = false;
-  }, [config]);
+  }, [spec]);
 
   const choose = useCallback((choice: string) => {
+    const rqid = lastRequest.current?.rqid;
     answered.current = lastRequest.current;
     lastRequest.current = null;
     setState((s) => ({ ...s, request: null, refused: null }));
-    battleRef.current?.choose(choice);
+    battleRef.current?.choose(choice, rqid);
   }, []);
 
   const forfeit = useCallback(() => battleRef.current?.forfeit(), []);

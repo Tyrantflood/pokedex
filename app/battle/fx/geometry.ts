@@ -12,9 +12,12 @@ export interface Point {
   y: number;
 }
 
+/** Where a side's Pokémon stands, seen from `own`: your Pokémon is always at the bottom left, whichever side of the battle you are on. */
+export const spotFor = (side: SideId, own: SideId) => SPOT[side === own ? "p1" : "p2"];
+
 /** The middle of a side's Pokémon, in pixels: a sprite's feet are at `y`, and its middle is a little above them. */
-export function centerOf(side: SideId, size: Size): Point {
-  const spot = SPOT[side];
+export function centerOf(side: SideId, size: Size, own: SideId = "p1"): Point {
+  const spot = spotFor(side, own);
   return { x: (size.w * spot.x) / 100, y: (size.h * (spot.y - 11)) / 100 };
 }
 

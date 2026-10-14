@@ -97,7 +97,8 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
   // ---- Easy: any legal move, now and then a switch -----------------------------------------------------------------
 
   private benchSlots(request: ParsedRequest): number[] {
-    return request.team.flatMap((p, i) => (!p.active && !p.fainted ? [i + 1] : []));
+    // Revival Blessing wants a fainted Pokémon; any other switch wants a healthy one.
+    return request.team.flatMap((p, i) => (!p.active && (request.reviving ? p.fainted : !p.fainted) ? [i + 1] : []));
   }
 
   private pick<T>(items: T[]): T {
@@ -119,7 +120,7 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
     const dex = this.dex;
     const foe = activeMon(this.view, otherSide(this.side));
     const bench = request.team.flatMap((p, i): (BenchOption & { slot: number })[] => {
-      if (p.active || p.fainted) return [];
+      if (p.active || (request.reviving ? !p.fainted : p.fainted)) return [];
       return [{ slot: i + 1, types: this.lookups.species(p.species).types, moveTypes: this.damagingTypes(p.moves), hpFraction: p.hp / p.maxHp }];
     });
     const foeInfo = foe ? { types: foe.types } : null;

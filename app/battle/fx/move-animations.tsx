@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { motion, type TargetAndTransition, type Transition } from "framer-motion";
 import { BANNER_MS, seeded, typeFx } from "@/lib/battle/move-fx";
-import type { PlayedCue } from "../use-local-battle";
+import type { PlayedCue } from "../use-battle-session";
 import { angleDeg, centerOf, distance, type Point, type Size } from "./geometry";
 import { Particles } from "./particles";
 import { Shape } from "./shapes";
@@ -50,8 +50,8 @@ function Orb({ color, px, animate, transition }: { color: string; px: number; an
 export function MoveAnimation({ cue, size, ts }: Props) {
   const fx = cue.fx;
   if (!fx || cue.kind !== "move") return null;
-  const from = centerOf(cue.side, size);
-  const to = cue.target && cue.target !== cue.side ? centerOf(cue.target, size) : from;
+  const from = centerOf(cue.side, size, cue.own);
+  const to = cue.target && cue.target !== cue.side ? centerOf(cue.target, size, cue.own) : from;
   const start = BANNER_MS / 1000; // the banner is shown first
   const dur = fx.durationMs / 1000;
   const look = typeFx(fx.type);

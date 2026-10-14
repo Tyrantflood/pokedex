@@ -3,14 +3,14 @@
 import { FORMATS } from "@/lib/battle/formats";
 import type { Difficulty } from "@/lib/battle/cpu-player";
 import { TURN_LIMITS } from "@/lib/battle/turn-limit";
-import type { BattleSettings } from "./battle-app";
+import type { BattleSettings } from "./settings";
 
 const DIFFICULTIES: { key: Difficulty; label: string; note: string }[] = [
   { key: "easy", label: "Easy", note: "Picks moves at random." },
   { key: "normal", label: "Normal", note: "Favours super effective and same-type moves, avoids immunities, sometimes switches out of a bad matchup." },
 ];
 
-export function Lobby({ settings, onChange, onStart }: { settings: BattleSettings; onChange: (settings: BattleSettings) => void; onStart: () => void }) {
+export function Lobby({ settings, onChange, onStart, onInvite }: { settings: BattleSettings; onChange: (settings: BattleSettings) => void; onStart: () => void; onInvite: () => void }) {
   const format = FORMATS.find((f) => f.key === settings.formatKey) ?? FORMATS[0];
   const name = settings.name.trim();
   return (
@@ -23,7 +23,7 @@ export function Lobby({ settings, onChange, onStart }: { settings: BattleSetting
     >
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Battle</h1>
-        <p className="mt-1 text-sm text-zinc-400">Random teams of six, one Pokémon out at a time. Play the CPU here; nothing leaves your browser.</p>
+        <p className="mt-1 text-sm text-zinc-400">Random teams of six, one Pokémon out at a time. Play the CPU right here in your browser, or invite a friend with a link.</p>
       </div>
 
       <label className="block">
@@ -105,6 +105,15 @@ export function Lobby({ settings, onChange, onStart }: { settings: BattleSetting
       >
         Battle the CPU
       </button>
+      <button
+        type="button"
+        disabled={!name}
+        onClick={onInvite}
+        className="w-full rounded-xl border border-teal-300/50 px-4 py-3 text-base font-bold text-teal-100 transition-colors hover:bg-teal-300/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-300 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Invite a friend
+      </button>
+      <p className="-mt-3 text-center text-xs text-zinc-500">A friend battle uses the format and turn limit above and a private link only you and your friend have.</p>
     </form>
   );
 }

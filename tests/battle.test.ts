@@ -132,7 +132,7 @@ function playOut(formatKey: string, difficulty: "easy" | "normal", turnCap = 200
           return;
         }
         if (request.forceSwitch || !request.active) {
-          const slot = request.team.findIndex((p) => !p.active && !p.fainted);
+          const slot = request.team.findIndex((p) => !p.active && (request.reviving ? p.fainted : !p.fainted));
           battle.choose(slot >= 0 ? `switch ${slot + 1}` : "default");
         } else {
           const index = request.active.moves.findIndex((m) => !m.disabled && m.pp !== 0);
@@ -175,4 +175,23 @@ test("every format carries the Endless Battle Clause: Gens 1-3 and National Dex 
     assert.equal(format.formatId.includes("@@@Endless Battle Clause"), !hasItself, `${format.key}: ${format.formatId}`);
     assert.ok(!format.formatId.includes("@@@!Endless"), "never switched off");
   }
+});
+
+test("Revival Blessing asks for a fainted Pokémon: the request says so, and a revive choice is a switch to a fainted slot", () => {
+  const request = parseRequest({
+    forceSwitch: [true],
+    side: {
+      id: "p1",
+      pokemon: [
+        { ident: "p1: Pawmot", details: "Pawmot, L80", condition: "200/250", active: true, reviving: true, moves: ["revivalblessing"] },
+        { ident: "p1: Gengar", details: "Gengar, L80", condition: "0 fnt", active: false, moves: [] },
+        { ident: "p1: Snorlax", details: "Snorlax, L80", condition: "300/300", active: false, moves: [] },
+      ],
+    },
+  });
+  assert.equal(request.reviving, true);
+  assert.equal(request.forceSwitch, true);
+  const reviveSlot = request.team.findIndex((p) => !p.active && (request.reviving ? p.fainted : !p.fainted));
+  assert.equal(reviveSlot, 1, "the fainted Gengar, not the healthy Snorlax");
+  assert.equal(parseRequest({ forceSwitch: [true], side: { id: "p1", pokemon: [{ ident: "p1: A", details: "Pawmot, L80", condition: "0 fnt", active: true }, { ident: "p1: B", details: "Gengar, L80", condition: "10/10", active: false }] } }).reviving, false, "an ordinary forced switch is not a revive");
 });

@@ -21,6 +21,8 @@ export interface BattleMessage {
   request: ParsedRequest | null;
   /** The simulator refused the last choice. */
   error: string | null;
+  /** The whole log so far, delivered after a reconnect: rebuild the view from it without playing the animations. */
+  instant?: boolean;
 }
 
 export interface MoveDetails {
@@ -32,12 +34,14 @@ export interface MoveDetails {
   description: string;
 }
 
+/** Where a battle comes from: the in-browser simulator (against the CPU) or a friend's room on the server. The screen doesn't care which. */
 export interface LocalBattle {
   lookups: Lookups;
   moveDetails(name: string): MoveDetails;
   itemText(name: string): string;
   abilityText(name: string): string;
-  choose(choice: string): void;
+  /** `rqid` is the question being answered (the room server refuses answers to an old one); the local simulator ignores it. */
+  choose(choice: string, rqid?: number): void;
   /** Ends the battle as a loss for the player. */
   forfeit(): void;
   destroy(): void;

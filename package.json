@@ -11,7 +11,11 @@
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests/**/*.test.ts\"",
     "snapshot": "node scripts/snapshot-pokeapi.mjs",
     "postbuild": "node scripts/check-built-css.mjs",
-    "test:strength": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests-slow/**/*.test.ts\""
+    "test:strength": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests-slow/strength.test.ts\"",
+    "test:room-live": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests-slow/room-live.test.ts\"",
+    "room:dev": "npm --prefix party run dev",
+    "room:deploy": "npm --prefix party run deploy",
+    "room:typecheck": "npm --prefix party run typecheck"
   },
   "dependencies": {
     "@pkmn/randoms": "0.10.11",

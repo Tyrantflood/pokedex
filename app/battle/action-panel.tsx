@@ -6,7 +6,7 @@ import { PLACEHOLDER_URL } from "@/lib/battle/sprite-chain";
 import type { ParsedRequest, RequestMon } from "@/lib/battle/protocol";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import type { PokemonType } from "@/lib/pokemon-types";
-import type { BattleState } from "./use-local-battle";
+import type { BattleState } from "./use-battle-session";
 import { HpBar, StatusChip, TypeChip } from "./ui";
 
 type Special = "mega" | "ultra" | "z" | "dynamax" | "tera";
@@ -35,7 +35,8 @@ function Choices({ request, helpers, onChoose, refused }: { request: ParsedReque
   const [special, setSpecial] = useState<Special | null>(null);
   const active = request.active;
   const forced = request.forceSwitch || !active;
-  const canSwitch = (member: RequestMon) => !member.active && !member.fainted && (forced || !active?.trapped);
+  // Revival Blessing asks for a fainted Pokémon to bring back; every other switch needs a healthy one.
+  const canSwitch = (member: RequestMon) => !member.active && (request.reviving ? member.fainted : !member.fainted) && (forced || !active?.trapped);
 
   const specials: { key: Special; label: string }[] = [];
   if (active) {
@@ -52,7 +53,7 @@ function Choices({ request, helpers, onChoose, refused }: { request: ParsedReque
   return (
     <div className="rounded-2xl border border-white/10 bg-zinc-900/60 p-3 sm:p-4">
       {forced ? (
-        <p className="mb-2 text-sm font-semibold text-teal-100">{request.active ? "Choose your next Pokémon" : "Your Pokémon fainted. Choose the next one."}</p>
+        <p className="mb-2 text-sm font-semibold text-teal-100">{request.reviving ? "Revival Blessing: choose a fainted Pokémon to bring back" : request.active ? "Choose your next Pokémon" : "Your Pokémon fainted. Choose the next one."}</p>
       ) : (
         <>
           <div className="mb-2 flex min-h-7 flex-wrap items-center gap-2">

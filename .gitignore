@@ -42,3 +42,8 @@ next-env.d.ts
 
 # local pokedex data cache
 /.cache
+
+# Cloudflare Worker (party/)
+.wrangler/
+.dev.vars
+/party/node_modules

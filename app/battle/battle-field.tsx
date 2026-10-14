@@ -6,8 +6,8 @@ import { BANNER_MS, isBigHit } from "@/lib/battle/move-fx";
 import { activeMon, type BattleView, type MonView, type SideId } from "@/lib/battle/protocol";
 import { LogOverlay } from "./battle-log";
 import { FxLayer, MoveBanner } from "./fx/fx-layer";
-import { centerOf, SPOT, type Size } from "./fx/geometry";
-import type { PlayedCue } from "./use-local-battle";
+import { centerOf, spotFor, type Size } from "./fx/geometry";
+import type { PlayedCue } from "./use-battle-session";
 import { HpBar, SpriteImage, StatusChip, TypeChip } from "./ui";
 
 const STAT_SHORT: Record<string, string> = { atk: "Atk", def: "Def", spa: "SpA", spd: "SpD", spe: "Spe", accuracy: "Acc", evasion: "Eva" };
@@ -83,13 +83,13 @@ export function BattleField({ view, cue, cues, turnLimit = 0, ownSide = "p1" }: 
             key={side}
             aria-hidden
             className="absolute h-[9%] w-[36%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] bg-black/35"
-            style={{ left: `${SPOT[side].x}%`, top: `${SPOT[side].y - 1}%` }}
+            style={{ left: `${spotFor(side, ownSide).x}%`, top: `${spotFor(side, ownSide).y - 1}%` }}
           />
         ))}
         <WeatherLayer weather={view.weather} />
 
         {(["p2", "p1"] as const).map((side) => (
-          <Combatant key={side} view={view} side={side} facing={side === ownSide ? "back" : "front"} scale={scale} cue={cue} size={size} />
+          <Combatant key={side} view={view} side={side} ownSide={ownSide} facing={side === ownSide ? "back" : "front"} scale={scale} cue={cue} size={size} />
         ))}
         <FxLayer cues={cues} size={size} />
       </div>
@@ -140,7 +140,7 @@ function WeatherLayer({ weather }: { weather: string }) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-function Combatant({ view, side, facing, scale, cue, size }: { view: BattleView; side: SideId; facing: "front" | "back"; scale: number; cue: PlayedCue | null; size: Size }) {
+function Combatant({ view, side, ownSide, facing, scale, cue, size }: { view: BattleView; side: SideId; ownSide: SideId; facing: "front" | "back"; scale: number; cue: PlayedCue | null; size: Size }) {
   const mon = activeMon(view, side);
   const reduced = useReducedMotion();
   const [scope, animate] = useAnimate();
@@ -170,8 +170,8 @@ function Combatant({ view, side, facing, scale, cue, size }: { view: BattleView;
       const style = cue.fx.style;
       if (style === "lunge") {
         // Physical: into the target and back; the contact is at 85 % of the way, just before the impact lands.
-        const from = centerOf(side, size);
-        const to = centerOf(cue.target ?? side, size);
+        const from = centerOf(side, size, cue.own);
+        const to = centerOf(cue.target ?? side, size, cue.own);
         const vx = (to.x - from.x) * 0.8;
         const vy = (to.y - from.y) * 0.8;
         void animate(el, { x: [0, vx, 0], y: [0, vy, 0], scale: [1, 1.08, 1] }, { duration: (cue.fx.durationMs / 1000) * ts, delay: wait * ts, times: [0, 0.85, 1], ease: "easeIn" });
@@ -198,7 +198,7 @@ function Combatant({ view, side, facing, scale, cue, size }: { view: BattleView;
     }
   }, [cue, side, reduced, animate, scope, size]);
 
-  const spot = SPOT[side];
+  const spot = spotFor(side, ownSide);
   return (
     <div className="absolute" style={{ left: `${spot.x}%`, top: `${spot.y}%`, transform: "translate(-50%, -100%)" }}>
       <AnimatePresence mode="popLayout">
