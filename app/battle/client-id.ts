@@ -1,6 +1,9 @@
 import { isClientId } from "@/lib/battle/room-protocol";
 
 const KEY = "battle:client-id";
+// crypto.randomUUID only exists on https pages and localhost; getRandomValues works everywhere (a page opened over plain http on a LAN address).
+const randomId = () => [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+
 let remembered: string | null = null;
 
 /**
@@ -14,7 +17,7 @@ export function clientId(): string {
   } catch {
     if (remembered) return remembered;
   }
-  const id = remembered && isClientId(remembered) ? remembered : crypto.randomUUID().replaceAll("-", "");
+  const id = remembered && isClientId(remembered) ? remembered : randomId();
   remembered = id;
   try {
     localStorage.setItem(KEY, id);

@@ -613,3 +613,22 @@ test("the host: a turn limit ends the battle for both players at the same point,
   }
   assert.ok(reached >= 1, "a two-turn limit should be reached in one of six random battles");
 });
+
+test("browser ids are made without crypto.randomUUID (missing on plain-http pages), and pass the server's check", () => {
+  const original = globalThis.crypto;
+  // A page opened over plain http has crypto.getRandomValues but not crypto.randomUUID.
+  Object.defineProperty(globalThis, "crypto", { value: { getRandomValues: original.getRandomValues.bind(original) }, configurable: true });
+  const storage = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", { value: { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => void storage.set(k, v) }, configurable: true });
+  return import("../app/battle/client-id").then(({ clientId }) => {
+    try {
+      const id = clientId();
+      assert.ok(isClientId(id), id);
+      assert.equal(clientId(), id, "kept between calls");
+      assert.equal(storage.get("battle:client-id"), id, "and saved in the browser");
+    } finally {
+      Object.defineProperty(globalThis, "crypto", { value: original, configurable: true });
+      Reflect.deleteProperty(globalThis, "localStorage");
+    }
+  });
+});
