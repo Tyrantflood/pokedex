@@ -11,6 +11,7 @@ import { applyLine, cloneView, createView, syncRequest, type BattleView, type Cu
 import type { PlayerStatus, RoomConfig, RoomPhase } from "@/lib/battle/room-protocol";
 // Type-only: the simulator itself is loaded with `import()` below, only when a battle starts.
 import type { BattleMessage, Difficulty, LocalBattle } from "@/lib/battle/engine";
+import type { PokemonSet } from "@pkmn/sets";
 import type { ConnectionState } from "@/lib/battle/online-engine";
 
 export interface BattleConfig {
@@ -19,6 +20,8 @@ export interface BattleConfig {
   playerName: string;
   /** 0 = no limit. */
   turnLimit: number;
+  /** "Bring your own team" formats: the player's team and the CPU's (a recommended one). */
+  teams?: { player: PokemonSet[]; cpu: PokemonSet[] };
 }
 
 /** A friend battle: which room, who we are, and (for whoever creates it) what kind of battle it is. */
@@ -64,7 +67,8 @@ export interface RoomState {
 }
 
 export interface BattleState {
-  status: "loading" | "waiting" | "playing" | "over" | "error";
+  /** waiting: for a friend to arrive; teams: both are here and a "bring your own team" battle is waiting for teams. */
+  status: "loading" | "waiting" | "teams" | "playing" | "over" | "error";
   error: string | null;
   /** For an error: why (a room server's code such as "full" or "not-found"). */
   errorCode: string | null;
@@ -81,6 +85,8 @@ export interface BattleState {
   helpers: Pick<LocalBattle, "moveDetails" | "itemText" | "abilityText" | "lookups"> | null;
   /** Friend battles: the room, who is in it and whether we are connected. */
   room: RoomState | null;
+  /** The server's verdict on the team this player last handed in (null before one was). */
+  teamResult: { ok: boolean; errors: string[] } | null;
 }
 
 const IDLE: BattleState = {
@@ -95,6 +101,7 @@ const IDLE: BattleState = {
   refused: null,
   helpers: null,
   room: null,
+  teamResult: null,
 };
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -227,11 +234,23 @@ export function useBattleSession(spec: SessionSpec | null, options: { muted: boo
               void pump(); // anything that arrived while the source was being made
             },
             onMessage: receive,
+            onTeamResult(teamResult) {
+              if (!cancelled) setState((s) => ({ ...s, teamResult }));
+            },
             onStatus(status) {
               if (cancelled) return;
               setState((s) => ({
                 ...s,
-                status: s.status === "over" ? "over" : status.phase === "waiting" ? "waiting" : s.status === "waiting" || s.status === "loading" ? "playing" : s.status,
+                status:
+                  s.status === "over"
+                    ? "over"
+                    : status.phase === "waiting"
+                      ? "waiting"
+                      : status.phase === "teams"
+                        ? "teams"
+                        : s.status === "waiting" || s.status === "teams" || s.status === "loading"
+                          ? "playing"
+                          : s.status,
                 room: s.room ? { ...s.room, phase: status.phase, players: status.players, statusAt: Date.now() } : s.room,
               }));
             },
@@ -279,6 +298,15 @@ export function useBattleSession(spec: SessionSpec | null, options: { muted: boo
   }, []);
 
   const forfeit = useCallback(() => battleRef.current?.forfeit(), []);
+  /** Friend battles with "bring your own team": hand in a packed team, or take it back. */
+  const submitTeam = useCallback((packed: string) => {
+    setState((s) => ({ ...s, teamResult: null }));
+    battleRef.current?.submitTeam?.(packed);
+  }, []);
+  const withdrawTeam = useCallback(() => {
+    setState((s) => ({ ...s, teamResult: null }));
+    battleRef.current?.withdrawTeam?.();
+  }, []);
 
-  return { state, choose, forfeit };
+  return { state, choose, forfeit, submitTeam, withdrawTeam };
 }

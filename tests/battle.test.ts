@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Dex } from "@pkmn/sim";
 import { startLocalBattle, type BattleMessage } from "../lib/battle/engine";
-import { FORMATS } from "../lib/battle/formats";
+import { FORMATS, RANDOM_FORMATS } from "../lib/battle/formats";
 import { spriteIdFor } from "../lib/battle/ids";
 import { makeLookups } from "../lib/battle/dex-facts";
 import { applyLine, createView, syncRequest, type BattleView, parseCondition, parseDetails, parseIdent, parseRequest } from "../lib/battle/protocol";
@@ -108,7 +108,7 @@ test("National Dex teams: six Pokémon, from every generation, no duplicate spec
 });
 
 test("single-generation formats generate full teams", () => {
-  for (const format of FORMATS.slice(1)) assert.equal(generateTeam(format, "1,2,3,4").length, 6, format.key);
+  for (const format of RANDOM_FORMATS.slice(1)) assert.equal(generateTeam(format, "1,2,3,4").length, 6, format.key);
 });
 
 /** Plays the player's side by hand (first move, first healthy switch) while the real reducer follows the protocol. */
@@ -170,7 +170,7 @@ for (const [key, difficulty] of [
 }
 
 test("every format carries the Endless Battle Clause: Gens 1-3 and National Dex by themselves, Gens 4-9 by our added rule", () => {
-  for (const format of FORMATS) {
+  for (const format of RANDOM_FORMATS) {
     const hasItself = ["natdex", "gen3", "gen2", "gen1"].includes(format.key);
     assert.equal(format.formatId.includes("@@@Endless Battle Clause"), !hasItself, `${format.key}: ${format.formatId}`);
     assert.ok(!format.formatId.includes("@@@!Endless"), "never switched off");

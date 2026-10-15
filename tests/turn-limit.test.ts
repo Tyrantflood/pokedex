@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startLocalBattle } from "../lib/battle/engine";
-import { FORMATS } from "../lib/battle/formats";
+import { FORMATS, RANDOM_FORMATS } from "../lib/battle/formats";
 import { adjudicate, normalizeTurnLimit, TURN_LIMITS, type SideTally } from "../lib/battle/turn-limit";
 import { applyLine, createView, syncRequest } from "../lib/battle/protocol";
 
@@ -109,7 +109,7 @@ test("without a limit nothing is cut short, and every format keeps the Endless B
   const none = await play("gen9", 0);
   assert.ok(!none.lines.some((l) => l.includes("Turn limit reached")));
   // The clause is part of every format (Gens 4-9 get it from formats.ts, the rest have it already), and a turn limit of ours must not remove it.
-  for (const format of FORMATS) {
+  for (const format of RANDOM_FORMATS) {
     const { lines } = await play(format.key, 2);
     assert.ok(lines.some((l) => l.startsWith("|rule|Endless Battle Clause")), `${format.key} has no Endless Battle Clause with a turn limit set`);
   }

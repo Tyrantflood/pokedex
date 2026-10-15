@@ -7,6 +7,8 @@ export interface BattleFormat {
   generator: string;
   gen: number;
   note: string;
+  /** "Bring your own team": the players choose their teams (from My Teams or the recommended ones) instead of being given random ones. */
+  custom: boolean;
 }
 
 const gens = [9, 8, 7, 6, 5, 4, 3, 2, 1];
@@ -18,6 +20,45 @@ const MECHANICS: Record<number, string> = {
   6: "Mega Evolution",
 };
 
+/**
+ * "Bring your own team" formats: Smogon's OU tier for each generation, National Dex (Gen 9) and Anything Goes (Gen 9, no bans at all). The
+ * simulator checks teams against each format's own rules and bans. No Team Preview (the first Pokémon on the team leads), like the random
+ * formats, so there is no extra lead-selection step; the Endless Battle Clause is part of every one of these tiers.
+ */
+function teamFormats(): BattleFormat[] {
+  const ou = gens.map((gen) => ({
+    key: `team-gen${gen}ou`,
+    label: `Gen ${gen} OU`,
+    // Gens 1-4 have no Team Preview rule to remove (the simulator refuses to remove a rule that isn't there).
+    formatId: gen >= 5 ? `gen${gen}ou@@@!Team Preview` : `gen${gen}ou`,
+    generator: "",
+    gen,
+    note: `Smogon's OverUsed tier for Generation ${gen}. Bring a team that passes the simulator's validator.`,
+    custom: true,
+  }));
+  return [
+    {
+      key: "team-natdex",
+      label: "National Dex",
+      formatId: "gen9nationaldex@@@!Team Preview",
+      generator: "",
+      gen: 9,
+      note: "Gen 9 mechanics with every Pokémon back, past generations' moves and Mega Evolution. Smogon's National Dex tier.",
+      custom: true,
+    },
+    ...ou,
+    {
+      key: "team-ag",
+      label: "Anything Goes",
+      formatId: "gen9anythinggoes@@@!Team Preview",
+      generator: "",
+      gen: 9,
+      note: "Gen 9 with nothing banned. Any legal Pokémon, move and item; for friends who don't want rules.",
+      custom: true,
+    },
+  ];
+}
+
 export const FORMATS: BattleFormat[] = [
   {
     key: "natdex",
@@ -27,6 +68,7 @@ export const FORMATS: BattleFormat[] = [
     generator: "natdex",
     gen: 9,
     note: "One team mixing Pokémon from every generation, with Gen 9 mechanics, Megas and Terastallization.",
+    custom: false,
   },
   ...gens.map((gen) => ({
     key: `gen${gen}`,
@@ -37,8 +79,13 @@ export const FORMATS: BattleFormat[] = [
     generator: `gen${gen}randombattle`,
     gen,
     note: MECHANICS[gen] ? `Random battle with ${MECHANICS[gen]}.` : "Random battle.",
+    custom: false,
   })),
+  ...teamFormats(),
 ];
+
+export const RANDOM_FORMATS = FORMATS.filter((f) => !f.custom);
+export const TEAM_FORMATS = FORMATS.filter((f) => f.custom);
 
 export const DEFAULT_FORMAT = FORMATS[0];
 

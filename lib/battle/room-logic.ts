@@ -6,11 +6,12 @@
  * What is saved: `meta` (config, players, phase) and the numbered commands that built the battle (see room-battle.ts). After a restart
  * `load()` replays the commands and the battle, and each player's log, is back as it was.
  */
-import { FORMATS } from "./formats";
+import { FORMATS, formatByKey } from "./formats";
 import { BattleHost, buildStartCommands, type HostOutput } from "./room-battle";
 import {
   FORFEIT_AFTER_MS,
   isRoomCode,
+  MAX_CLIENT_MESSAGE_CHARS,
   parseClientMessage,
   ROOM_TTL_MS,
   sanitizeName,
@@ -21,6 +22,7 @@ import {
   type ServerMessage,
 } from "./room-protocol";
 import type { SideId } from "./protocol";
+import { packSets, toolsFor, unpackSets, validateSets } from "./team-check";
 import { normalizeTurnLimit } from "./turn-limit";
 
 export interface RoomStorage {
@@ -59,6 +61,8 @@ export interface RoomMeta {
   winner: string | null;
   /** The request each player has already answered. */
   answered?: { p1: number | null; p2: number | null };
+  /** "Bring your own team" battles: each player's checked team in packed form, until the battle starts. Never sent to anyone. */
+  teams?: { p1: string | null; p2: string | null };
 }
 
 export interface RoomOptions {
@@ -109,7 +113,7 @@ export class RoomLogic {
     if (this.loaded) return;
     this.loaded = true;
     this.meta = (await this.storage.get<RoomMeta>(META)) ?? null;
-    if (this.meta && this.meta.phase !== "waiting") {
+    if (this.meta && (this.meta.phase === "playing" || this.meta.phase === "ended")) {
       const commands = await this.storage.list<string>(CMD);
       this.commandCount = commands.length;
       this.host = this.newHost(this.meta);
@@ -156,7 +160,7 @@ export class RoomLogic {
     else if (++rate.count > RATE_LIMIT) return;
 
     const message = parseClientMessage(raw);
-    if (!message) return this.fail(connectionId, raw.length > 2000 ? "too-big" : "bad-message", "That message wasn't understood.", false);
+    if (!message) return this.fail(connectionId, raw.length > MAX_CLIENT_MESSAGE_CHARS ? "too-big" : "bad-message", "That message wasn't understood.", false);
     switch (message.type) {
       case "ping":
         return this.io.send(connectionId, { type: "pong" });
@@ -164,6 +168,10 @@ export class RoomLogic {
         return this.hello(connectionId, message.clientId, message.name, message.config);
       case "choose":
         return this.choose(connectionId, message.choice, message.rqid);
+      case "team":
+        return this.submitTeam(connectionId, message.packed);
+      case "unready":
+        return this.withdrawTeam(connectionId);
       case "forfeit":
         return this.forfeitBy(connectionId);
     }
@@ -213,11 +221,10 @@ export class RoomLogic {
     this.io.send(connectionId, { type: "welcome", side, code: this.code, config: meta.config, name: meta.players[side]!.name });
 
     if (joined && side === "p2") {
-      // Both seats are taken: the battle starts, with the commands saved as they are written.
-      meta.phase = "playing";
-      this.host = this.newHost(meta);
-      const names: [string, string] = [meta.players.p1!.name, meta.players.p2!.name];
-      for (const command of buildStartCommands({ formatKey: meta.config.formatKey, names })) this.host.command(command);
+      // Both seats are taken. Random teams: the battle starts now. Bring-your-own-team: it starts when both have handed in a team.
+      if (formatByKey(meta.config.formatKey).custom) meta.phase = "teams";
+      else this.startBattle(meta);
+      if (meta.phase === "teams") this.maybeStart(meta);
     } else if (!joined && this.host) {
       // Coming back: catch up on everything this player has seen, in one go.
       this.io.send(connectionId, { type: "battle", lines: [...this.host.history[side]], request: this.host.requests[side]?.raw ?? null, error: null, instant: true });
@@ -225,6 +232,53 @@ export class RoomLogic {
     await this.saveMeta();
     this.broadcastStatus();
     await this.reschedule();
+  }
+
+  /** Starts the battle: the commands are saved as they are written, and replaying them rebuilds it. */
+  private startBattle(meta: RoomMeta) {
+    meta.phase = "playing";
+    this.host = this.newHost(meta);
+    const names: [string, string] = [meta.players.p1!.name, meta.players.p2!.name];
+    const teams = meta.teams && meta.teams.p1 && meta.teams.p2 ? ([meta.teams.p1, meta.teams.p2] as [string, string]) : undefined;
+    for (const command of buildStartCommands({ formatKey: meta.config.formatKey, names, teams })) this.host.command(command);
+    delete meta.teams; // the teams now live in the saved commands; the lobby copy is not kept
+  }
+
+  /** Both seated and both teams in: go. */
+  private maybeStart(meta: RoomMeta) {
+    if (meta.phase !== "teams" || !meta.players.p1 || !meta.players.p2 || !meta.teams?.p1 || !meta.teams?.p2) return;
+    this.startBattle(meta);
+  }
+
+  private async submitTeam(connectionId: string, packed: string) {
+    const seat = this.seats.get(connectionId);
+    const meta = this.meta;
+    if (!seat || !meta) return this.fail(connectionId, "bad-message", "Say hello first.", false);
+    const format = formatByKey(meta.config.formatKey);
+    if (!format.custom) return this.io.send(connectionId, { type: "team-result", ok: false, errors: ["This battle uses random teams."] });
+    if (meta.phase !== "waiting" && meta.phase !== "teams") return this.io.send(connectionId, { type: "team-result", ok: false, errors: ["The battle has already started."] });
+    const sets = unpackSets(packed);
+    if (!sets) return this.io.send(connectionId, { type: "team-result", ok: false, errors: ["That team couldn't be read."] });
+    // The server decides: the same validator the team builder uses, run against this format's rules. What is kept is the validator's own
+    // version of the team (defaults filled in, nicknames removed).
+    const verdict = validateSets(toolsFor(format.formatId), sets);
+    if (!verdict.ok) return this.io.send(connectionId, { type: "team-result", ok: false, errors: verdict.errors.slice(0, 20) });
+    meta.teams = { p1: meta.teams?.p1 ?? null, p2: meta.teams?.p2 ?? null };
+    meta.teams[seat.side] = packSets(verdict.sets);
+    this.io.send(connectionId, { type: "team-result", ok: true, errors: [] });
+    this.maybeStart(meta);
+    await this.saveMeta();
+    this.broadcastStatus();
+    await this.reschedule();
+  }
+
+  private async withdrawTeam(connectionId: string) {
+    const seat = this.seats.get(connectionId);
+    const meta = this.meta;
+    if (!seat || !meta?.teams || (meta.phase !== "waiting" && meta.phase !== "teams")) return;
+    meta.teams[seat.side] = null;
+    await this.saveMeta();
+    this.broadcastStatus();
   }
 
   private async choose(connectionId: string, choice: string, rqid: number) {
@@ -289,7 +343,7 @@ export class RoomLogic {
       const player = meta.players[side];
       if (!player) return [];
       const since = meta.disconnectedAt[side];
-      return [{ side, name: player.name, connected: connected.has(side), forfeitInMs: meta.phase === "playing" && since !== null ? Math.max(0, since + this.forfeitAfterMs - now) : null }];
+      return [{ side, name: player.name, connected: connected.has(side), ready: !!meta.teams?.[side] || meta.phase === "playing" || meta.phase === "ended", forfeitInMs: meta.phase === "playing" && since !== null ? Math.max(0, since + this.forfeitAfterMs - now) : null }];
     });
   }
 

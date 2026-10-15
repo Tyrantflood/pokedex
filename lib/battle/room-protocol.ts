@@ -8,8 +8,9 @@ import type { SideId } from "./protocol";
 export const FORFEIT_AFTER_MS = 60_000;
 /** A room nobody has touched for this long is deleted from storage. */
 export const ROOM_TTL_MS = 6 * 60 * 60 * 1000;
-/** Anything bigger than this from a client is refused unread. */
-export const MAX_CLIENT_MESSAGE_CHARS = 2000;
+/** Anything bigger than this from a client is refused unread. (A packed team of six is well under 2,000 characters; see MAX_PACKED_TEAM_CHARS.) */
+export const MAX_CLIENT_MESSAGE_CHARS = 4000;
+export const MAX_PACKED_TEAM_CHARS = 3000;
 export const MAX_NAME_CHARS = 18;
 
 export interface RoomConfig {
@@ -19,12 +20,15 @@ export interface RoomConfig {
   turnLimit: number;
 }
 
-export type RoomPhase = "waiting" | "playing" | "ended";
+/** waiting: one seat taken; teams: both seated but a "bring your own team" battle is still waiting for a team; playing; ended. */
+export type RoomPhase = "waiting" | "teams" | "playing" | "ended";
 
 export interface PlayerStatus {
   side: SideId;
   name: string;
   connected: boolean;
+  /** "Bring your own team" battles: this player has handed in a team that passed the validator. (Which team stays secret.) */
+  ready: boolean;
   /** Milliseconds until this player forfeits for being away, if they are away during a battle. */
   forfeitInMs: number | null;
 }
@@ -35,6 +39,10 @@ export type ClientMessage =
   /** Always the first message. `config` is sent by whoever creates the room; the friend who follows the link sends none. */
   | { type: "hello"; clientId: string; name: string; config?: RoomConfig }
   | { type: "choose"; choice: string; rqid: number }
+  /** "Bring your own team" battles: this player's team in the simulator's packed format. The server checks it against the format. */
+  | { type: "team"; packed: string }
+  /** Take the team back, to pick another before the battle starts. */
+  | { type: "unready" }
   | { type: "forfeit" }
   | { type: "ping" };
 
@@ -47,6 +55,8 @@ export type ServerMessage =
   | { type: "status"; phase: RoomPhase; players: PlayerStatus[] }
   /** Protocol lines for this player only (their side of the simulator's stream), and what they may do next. `instant`: catching up after a refresh. */
   | { type: "battle"; lines: string[]; request: unknown | null; error: string | null; instant?: boolean }
+  /** The verdict on a submitted team. */
+  | { type: "team-result"; ok: boolean; errors: string[] }
   | { type: "error"; code: ErrorCode; message: string }
   | { type: "pong" };
 
@@ -77,6 +87,10 @@ export function sanitizeName(raw: unknown): string {
 export const CHOICE_PATTERN = /^(move [1-4]( (mega|ultra|zmove|dynamax|terastallize))?|switch [1-6]|default)$/;
 export const isValidChoice = (choice: unknown): choice is string => typeof choice === "string" && CHOICE_PATTERN.test(choice);
 
+/** A packed team as text: not empty, not huge, and no control characters (the simulator's packed format is one line). */
+export const isPackedTeamText = (packed: unknown): packed is string =>
+  typeof packed === "string" && packed.length > 0 && packed.length <= MAX_PACKED_TEAM_CHARS && !/[\u0000-\u001f\u007f]/.test(packed);
+
 export function parseClientMessage(raw: string): ClientMessage | null {
   if (raw.length > MAX_CLIENT_MESSAGE_CHARS) return null;
   let value: unknown;
@@ -100,6 +114,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     }
     case "choose":
       return isValidChoice(m.choice) && typeof m.rqid === "number" && Number.isInteger(m.rqid) ? { type: "choose", choice: m.choice, rqid: m.rqid } : null;
+    case "team":
+      return isPackedTeamText(m.packed) ? { type: "team", packed: m.packed } : null;
+    case "unready":
+      return { type: "unready" };
     case "forfeit":
       return { type: "forfeit" };
     case "ping":

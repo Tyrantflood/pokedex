@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseRequest, type ParsedRequest } from "../lib/battle/protocol";
+import { recommendedFor } from "../lib/battle/recommended";
+import { packSets } from "../lib/battle/team-check";
 import { newRoomCode, type ClientMessage, type ServerMessage } from "../lib/battle/room-protocol";
 
 // A real room server over real WebSockets: run `npm run dev` in party/ (workerd, port 8787) and then
@@ -224,4 +226,35 @@ test("a player who stays away for a minute forfeits (set BATTLE_SLOW=1; takes a 
   assert.ok(a.lines().includes("|win|Stayer"), "the player who stayed wins");
   assert.ok(waited >= 55_000 && waited <= 70_000, `forfeited after ${(waited / 1000).toFixed(1)} s`);
   a.drop();
+});
+
+test("a bring-your-own-team room: the server checks each team, starts when both are in, and the battle plays out", options, async () => {
+  const code = newRoomCode();
+  const a = new Client(code, "live-client-cccc");
+  const b = new Client(code, "live-client-dddd");
+  const teams = recommendedFor("team-gen8ou");
+  await a.connect();
+  a.hello("Prince", { formatKey: "team-gen8ou", turnLimit: 30 });
+  await a.until(() => a.of("welcome").length > 0, 10000, "the creator's welcome");
+  // An illegal team (an Uber in OU) is refused with a reason; the same Worker then accepts a legal one.
+  const uber = [{ ...teams[0].sets[0], species: "Zacian", name: "Zacian", ability: "Intrepid Sword", item: "Rusted Sword", moves: ["Behemoth Blade"] }];
+  a.send({ type: "team", packed: packSets(uber) });
+  await a.until(() => a.of("team-result").length === 1, 10000, "the verdict on the illegal team");
+  assert.equal(a.of("team-result")[0].ok, false);
+  assert.ok(a.of("team-result")[0].errors.some((e) => /Zacian/.test(e)));
+  a.send({ type: "team", packed: packSets(teams[0].sets) });
+  await a.until(() => a.of("team-result").length === 2, 10000, "the verdict on the legal team");
+  assert.equal(a.of("team-result")[1].ok, true);
+  await b.connect();
+  b.hello("Friend");
+  await b.until(() => b.of("status").at(-1)?.phase === "teams", 10000, "the teams phase");
+  assert.equal(b.of("status").at(-1)?.players.find((p) => p.side === "p1")?.ready, true);
+  b.send({ type: "team", packed: packSets(teams[1].sets) });
+  await a.until(() => !!a.request && !!b.request, 20000, "both players being asked for a first move");
+  assert.deepEqual(a.request!.team.map((m) => m.species), teams[0].sets.map((s) => s.species));
+  await playOut(a, b);
+  await a.until(() => a.over && b.over, 15000, "the result");
+  assert.equal(a.of("status").at(-1)?.phase, "ended");
+  a.drop();
+  b.drop();
 });

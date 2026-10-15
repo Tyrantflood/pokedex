@@ -5,10 +5,12 @@
  */
 import { BattleStreams, Dex, Teams } from "@pkmn/sim";
 import type { ModdedDex } from "@pkmn/sim";
+import type { PokemonSet } from "@pkmn/sets";
 import { CpuPlayer, type Difficulty } from "./cpu-player";
 import { makeLookups } from "./dex-facts";
 import type { BattleFormat } from "./formats";
 import { parseRequest, type Lookups, type ParsedRequest } from "./protocol";
+import { toolsFor, validateSets } from "./team-check";
 import { generateTeam, randomSeed } from "./teams";
 import { adjudicate } from "./turn-limit";
 
@@ -44,6 +46,9 @@ export interface LocalBattle {
   choose(choice: string, rqid?: number): void;
   /** Ends the battle as a loss for the player. */
   forfeit(): void;
+  /** Friend battles with "bring your own team": hand in this player's team (the server checks it and answers with onTeamResult), or take it back. */
+  submitTeam?(packed: string): void;
+  withdrawTeam?(): void;
   destroy(): void;
 }
 
@@ -53,10 +58,23 @@ export interface LocalBattleOptions {
   playerName: string;
   /** End the battle after this many turns and decide it (see turn-limit.ts); 0 or absent for no limit. The simulator's own protections stay on either way. */
   turnLimit?: number;
+  /** "Bring your own team" formats: both teams (already checked against the format; the first Pokémon leads). Random formats generate their own. */
+  teams?: { player: PokemonSet[]; cpu: PokemonSet[] };
 }
 
 export function startLocalBattle(options: LocalBattleOptions, onMessage: (message: BattleMessage) => void): LocalBattle {
   const { format, difficulty, playerName } = options;
+  // "Bring your own team": the simulator does not check teams itself, so check both here and battle with the validator's version of each.
+  let teams = options.teams;
+  if (format.custom) {
+    if (!teams) throw new Error(`${format.label} needs teams.`);
+    const tools = toolsFor(format.formatId);
+    const player = validateSets(tools, teams.player);
+    if (!player.ok) throw new Error(`Your team isn't legal in ${format.label}: ${player.errors[0]}`);
+    const cpu = validateSets(tools, teams.cpu);
+    if (!cpu.ok) throw new Error(`The CPU's team isn't legal in ${format.label}: ${cpu.errors[0]}`);
+    teams = { player: player.sets, cpu: cpu.sets };
+  }
   const turnLimit = options.turnLimit ?? 0;
   const dex: ModdedDex = Dex.forFormat(format.formatId.split("@@@")[0]);
   const lookups = makeLookups(dex);
@@ -102,12 +120,12 @@ export function startLocalBattle(options: LocalBattleOptions, onMessage: (messag
   })();
 
   const spec = { formatid: format.formatId, seed: randomSeed() };
-  const packedTeam = () => Teams.pack(generateTeam(format, randomSeed()));
+  const packedTeam = (side: "player" | "cpu") => Teams.pack(teams && format.custom ? teams[side] : generateTeam(format, randomSeed()));
   const cpuName = cpuNameFor;
   void streams.omniscient.write(
     `>start ${JSON.stringify(spec)}\n` +
-      `>player p1 ${JSON.stringify({ name: playerName, team: packedTeam() })}\n` +
-      `>player p2 ${JSON.stringify({ name: cpuName, team: packedTeam() })}`,
+      `>player p1 ${JSON.stringify({ name: playerName, team: packedTeam("player") })}\n` +
+      `>player p2 ${JSON.stringify({ name: cpuName, team: packedTeam("cpu") })}`,
   );
 
   return {

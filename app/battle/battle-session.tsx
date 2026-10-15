@@ -7,6 +7,7 @@ import { ActionPanel } from "./action-panel";
 import { BattleField } from "./battle-field";
 import { BattleLog } from "./battle-log";
 import { AwayBanner, ConnectionBanner, RoomError, WaitingPanel } from "./room-panels";
+import { RoomTeams } from "./room-teams";
 import { useBattleMusic } from "./use-battle-music";
 import { useBattleSession, type SessionSpec } from "./use-battle-session";
 import { useStored } from "./use-stored";
@@ -24,7 +25,7 @@ export function BattleSession({ spec, onRematch, onLeave }: { spec: SessionSpec;
   const muted = mutedRaw === "1";
   const [fast, setFast] = useState(false);
   const [confirmForfeit, setConfirmForfeit] = useState(false);
-  const { state, choose, forfeit } = useBattleSession(spec, { muted, fast });
+  const { state, choose, forfeit, submitTeam, withdrawTeam } = useBattleSession(spec, { muted, fast });
   const { view, room } = state;
   const over = state.status === "over";
   const online = spec.kind === "online";
@@ -62,7 +63,13 @@ export function BattleSession({ spec, onRematch, onLeave }: { spec: SessionSpec;
     );
 
   if (state.status === "error" && online) return <RoomError code={state.errorCode} message={state.error} onLeave={onLeave} />;
-  if (state.status === "waiting" && room) return <WaitingPanel code={room.code} connection={room.connection} onLeave={onLeave} />;
+  if ((state.status === "waiting" || state.status === "teams") && room) {
+    // "Bring your own team": both players pick a team first (the host can already, while waiting). Random teams: just wait for the friend.
+    if (formatByKey(room.config.formatKey).custom) {
+      return <RoomTeams room={room} ownSide={state.ownSide} waitingForFriend={state.status === "waiting"} teamResult={state.teamResult} onSubmit={submitTeam} onWithdraw={withdrawTeam} onLeave={onLeave} />;
+    }
+    return <WaitingPanel code={room.code} connection={room.connection} onLeave={onLeave} />;
+  }
 
   return (
     <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">

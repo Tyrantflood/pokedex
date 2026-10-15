@@ -3,6 +3,7 @@
 import { AnimatePresence, MotionConfig } from "framer-motion";
 import type { CardRects } from "./card-rects";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { matchesQuery, parseQuery, searchKey } from "@/lib/pokedex-search";
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { PokemonSummary } from "@/lib/summary";
 import { addMember, emptyTeam, removeMember, slotOf, teamMembers, type Candidate, type Team } from "@/lib/team";
@@ -88,18 +89,14 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
 
   useEffect(() => () => clearTimeout(exitTimer.current), []);
 
-  const searchKeys = useMemo(() => pokemon.map((p) => p.name.replace(/-/g, " ")), [pokemon]);
+  const searchKeys = useMemo(() => pokemon.map((p) => searchKey(p.name)), [pokemon]);
 
   const filtered = useMemo(() => {
-    const q = deferredQuery.trim().toLowerCase().replace(/^#/, "");
-    const nameQuery = q.replace(/-/g, " ");
-    const numberQuery = /^\d+$/.test(q) ? q.replace(/^0+/, "") : "";
+    const query = parseQuery(deferredQuery);
     return pokemon.filter((p, i) => {
       if (generation !== null && p.generation !== generation) return false;
       if (types.length > 0 && !types.every((t) => p.types.includes(t))) return false;
-      if (!q) return true;
-      if (numberQuery && String(p.number).startsWith(numberQuery)) return true;
-      return searchKeys[i].includes(nameQuery);
+      return matchesQuery(query, searchKeys[i], p.number);
     });
   }, [pokemon, searchKeys, deferredQuery, types, generation]);
 

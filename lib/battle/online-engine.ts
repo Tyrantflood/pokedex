@@ -38,6 +38,8 @@ export interface OnlineEvents {
   onReady(source: LocalBattle, welcome: Welcome): void;
   onMessage(message: BattleMessage): void;
   onStatus(status: { phase: RoomPhase; players: PlayerStatus[] }): void;
+  /** The server's verdict on the team this player handed in. */
+  onTeamResult(result: { ok: boolean; errors: string[] }): void;
   onConnection(state: ConnectionState): void;
   /** The server turned us away (room full, no such battle, bad code): nothing will work, don't retry. */
   onError(error: { code: string; message: string }): void;
@@ -109,6 +111,8 @@ export function startOnlineBattle(options: OnlineOptions, events: OnlineEvents):
           abilityText: (name) => dex.abilities.get(name).shortDesc || "",
           choose: (choice, rqid) => send({ type: "choose", choice, rqid: rqid ?? 0 }),
           forfeit: () => send({ type: "forfeit" }),
+          submitTeam: (packed) => send({ type: "team", packed }),
+          withdrawTeam: () => send({ type: "unready" }),
           destroy: () => destroy(),
         };
         events.onReady(source, { side: message.side, config: message.config, name: message.name });
@@ -116,6 +120,8 @@ export function startOnlineBattle(options: OnlineOptions, events: OnlineEvents):
       }
       case "status":
         return events.onStatus({ phase: message.phase, players: message.players });
+      case "team-result":
+        return events.onTeamResult({ ok: message.ok, errors: message.errors });
       case "battle":
         return events.onMessage({ lines: message.lines, request: message.request ? parseRequest(message.request) : null, error: message.error, instant: message.instant });
       case "error":

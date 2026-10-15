@@ -632,3 +632,162 @@ test("browser ids are made without crypto.randomUUID (missing on plain-http page
     }
   });
 });
+
+// ---- "bring your own team" rooms ----------------------------------------------------------------------------------------
+
+import { recommendedFor } from "../lib/battle/recommended";
+import { packSets, toolsFor, validateSets } from "../lib/battle/team-check";
+
+const teamConfig = { formatKey: "team-gen9ou", turnLimit: 50 };
+const teamsOf = (key: string) => recommendedFor(key).map((t) => ({ name: t.name, sets: t.sets, packed: packSets(t.sets) }));
+
+async function submit(rig: Rig, conn: string, packed: string) {
+  await rig.send(conn, { type: "team", packed });
+  return rig.of(conn, "team-result").at(-1)!;
+}
+
+test("custom-team room: the host picks a team while waiting, the friend joins, and the battle starts only when both teams are in", async () => {
+  const [t1, t2] = teamsOf("team-gen9ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  const b = rig.connection();
+  await rig.hello(a, A, "Prince", teamConfig);
+  assert.equal(rig.of(a, "status").at(-1)?.phase, "waiting");
+  assert.deepEqual(await submit(rig, a, t1.packed), { type: "team-result", ok: true, errors: [] });
+  assert.equal(rig.of(a, "status").at(-1)?.players[0].ready, true);
+
+  await rig.hello(b, B, "Friend");
+  assert.equal(rig.of(b, "status").at(-1)?.phase, "teams", "both seated, a team still missing");
+  assert.equal(rig.lines(a).length, 0, "no battle yet");
+  assert.equal(rig.logic.snapshot().commandCount, 0);
+  const friendView = rig.of(b, "status").at(-1)!.players;
+  assert.deepEqual(friendView.map((p) => [p.side, p.ready]), [["p1", true], ["p2", false]], "the friend sees only that the host is ready");
+
+  assert.equal((await submit(rig, b, t2.packed)).ok, true);
+  for (const conn of [a, b]) assert.equal(rig.of(conn, "status").at(-1)?.phase, "playing");
+  assert.equal(rig.logic.snapshot().commandCount, 3);
+  // Each side is asked about its own team, in the order handed in (the first leads).
+  assert.deepEqual(rig.request(a)!.team.map((m) => m.species), t1.sets.map((s) => s.species));
+  assert.deepEqual(rig.request(b)!.team.map((m) => m.species), t2.sets.map((s) => s.species));
+  assert.equal(rig.logic.snapshot().meta?.teams, undefined, "the lobby copy of the teams is dropped once the commands hold them");
+});
+
+test("custom-team room: an illegal, banned, unreadable or oversized team is refused with reasons, and the player stays not ready", async () => {
+  const [t1] = teamsOf("team-gen9ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  await rig.hello(a, A, "Prince", teamConfig);
+  const banned = [{ ...t1.sets[0], species: "Koraidon", name: "Koraidon", ability: "Orichalcum Pulse", moves: ["Close Combat"] }];
+  const refused = await submit(rig, a, packSets(banned));
+  assert.equal(refused.ok, false);
+  assert.ok(refused.errors.some((e) => /Koraidon/.test(e)), refused.errors.join("|"));
+  const overEv = [{ ...t1.sets[0], evs: { hp: 252, atk: 252, def: 252, spa: 252, spd: 252, spe: 252 } }];
+  assert.equal((await submit(rig, a, packSets(overEv))).ok, false);
+  assert.equal((await submit(rig, a, "this is not a packed team")).ok, false);
+  assert.equal(rig.of(a, "status").at(-1)?.players[0].ready, false);
+  await rig.send(a, { type: "team", packed: "x".repeat(3500) });
+  assert.equal(rig.of(a, "team-result").length, 3, "an oversized message is dropped unread, not answered");
+  assert.equal((await submit(rig, a, t1.packed)).ok, true);
+  assert.equal(rig.of(a, "status").at(-1)?.players[0].ready, true);
+});
+
+test("custom-team room: Anything Goes accepts what OU bans, and the server keeps the validator's version (no nicknames)", async () => {
+  const [t1] = teamsOf("team-gen9ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  await rig.hello(a, A, "Prince", { formatKey: "team-ag", turnLimit: 0 });
+  const koraidon = [{ ...t1.sets[0], species: "Koraidon", name: "Koraidon", ability: "Orichalcum Pulse", moves: ["Close Combat", "Flame Charge", "Swords Dance", "Dragon Claw"], evs: { hp: 0, atk: 252, def: 0, spa: 0, spd: 4, spe: 252 }, nature: "Jolly", item: "Life Orb", teraType: "Fire" }];
+  assert.equal((await submit(rig, a, packSets(koraidon.map((s) => ({ ...s, name: "Nickname" }))))).ok, true);
+  const b = rig.connection();
+  await rig.hello(b, B, "Friend");
+  assert.equal((await submit(rig, b, teamsOf("team-ag")[0].packed)).ok, true);
+  assert.ok(!rig.lines(a).concat(rig.lines(b)).some((l) => l.includes("Nickname")), "the nickname never reached the battle");
+});
+
+test("custom-team room: a team can be taken back before the battle starts, and random-team rooms and started battles refuse teams", async () => {
+  const [t1, t2, t3] = teamsOf("team-gen9ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  const b = rig.connection();
+  await rig.hello(a, A, "Prince", teamConfig);
+  await rig.hello(b, B, "Friend");
+  await submit(rig, a, t1.packed);
+  await rig.send(a, { type: "unready" });
+  assert.equal(rig.of(a, "status").at(-1)?.players[0].ready, false);
+  await submit(rig, b, t2.packed);
+  assert.equal(rig.of(b, "status").at(-1)?.phase, "teams", "one team is not enough");
+  await submit(rig, a, t3.packed);
+  assert.equal(rig.of(a, "status").at(-1)?.phase, "playing");
+  assert.deepEqual(rig.request(a)!.team.map((m) => m.species), t3.sets.map((s) => s.species), "the replacement team is the one in the battle");
+  const late = await submit(rig, a, t1.packed);
+  assert.equal(late.ok, false);
+  assert.match(late.errors[0], /already started/);
+
+  const random = new Rig();
+  const r = random.connection();
+  await random.hello(r, A, "Prince", config);
+  assert.equal((await submit(random, r, t1.packed)).ok, false, "random teams: nothing to hand in");
+});
+
+test("custom-team room: nothing about the other team leaks, in status or in what is sent", async () => {
+  const [t1, t2] = teamsOf("team-gen9ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  const b = rig.connection();
+  await rig.hello(a, A, "Prince", teamConfig);
+  await rig.hello(b, B, "Friend");
+  await submit(rig, a, t1.packed);
+  await submit(rig, b, t2.packed);
+  const mine = new Set(t1.sets.map((s) => s.species));
+  const hiddenFromA = t2.sets.map((s) => s.species).filter((s) => !mine.has(s) && s !== t2.sets[0].species);
+  const sentToA = JSON.stringify(rig.messages(a));
+  for (const species of hiddenFromA) assert.ok(!sentToA.includes(species), `${species} (an unrevealed Pokemon of the friend) was sent to the host`);
+  assert.ok(sentToA.includes(t2.sets[0].species), "the lead is shown, as in any battle");
+  for (const m of rig.of(a, "status")) assert.ok(!JSON.stringify(m).includes("packed"));
+});
+
+test("custom-team room: a restart while teams are being picked, and again mid-battle, loses nothing", async () => {
+  const [t1, t2] = teamsOf("team-gen9ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  await rig.hello(a, A, "Prince", teamConfig);
+  await submit(rig, a, t1.packed);
+  rig.restart();
+  const a2 = rig.connection();
+  await rig.hello(a2, A, "Prince");
+  assert.equal(rig.of(a2, "status").at(-1)?.players[0].ready, true, "the host's team survived the restart");
+  const b = rig.connection();
+  await rig.hello(b, B, "Friend");
+  await submit(rig, b, t2.packed);
+  assert.equal(rig.of(b, "status").at(-1)?.phase, "playing");
+  await untilBothAsked(rig, { a: a2, b });
+  const before = { a: rig.lines(a2).length, b: rig.lines(b).length };
+  rig.restart();
+  const a3 = rig.connection();
+  const b3 = rig.connection();
+  await rig.hello(a3, A, "Prince");
+  await rig.hello(b3, B, "Friend");
+  assert.equal(rig.of(a3, "battle")[0].instant, true);
+  assert.equal(rig.lines(a3).length, before.a, "the host's log is rebuilt exactly");
+  assert.equal(rig.lines(b3).length, before.b, "and the friend's");
+  assert.deepEqual(rig.request(a3)!.team.map((m) => m.species), t1.sets.map((s) => s.species));
+  await playToEnd(rig, { a: a3, b: b3 });
+  assert.equal(rig.logic.snapshot().meta?.phase, "ended");
+});
+
+test("every custom format starts a battle from recommended teams and plays to the end", async () => {
+  for (const key of ["team-gen1ou", "team-gen3ou", "team-gen5ou", "team-gen8ou", "team-natdex", "team-ag"]) {
+    const [t1, t2] = teamsOf(key);
+    const rig = new Rig();
+    const a = rig.connection();
+    const b = rig.connection();
+    await rig.hello(a, A, "Prince", { formatKey: key, turnLimit: 30 });
+    await rig.hello(b, B, "Friend");
+    assert.equal((await submit(rig, a, t1.packed)).ok, true, key);
+    assert.equal((await submit(rig, b, (t2 ?? t1).packed)).ok, true, key);
+    assert.equal(rig.of(a, "status").at(-1)?.phase, "playing", key);
+    await playToEnd(rig, { a, b });
+    assert.equal(rig.logic.snapshot().meta?.phase, "ended", `${key} did not finish`);
+  }
+  assert.ok(validateSets(toolsFor("gen9ou"), recommendedFor("team-gen9ou")[0].sets).ok);
+});

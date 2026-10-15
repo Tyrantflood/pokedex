@@ -6,8 +6,8 @@ import type { SideId } from "@/lib/battle/protocol";
 import type { ConnectionState } from "@/lib/battle/online-engine";
 import type { RoomState } from "./use-battle-session";
 
-/** What the creator sees until their friend arrives: the private link to send. */
-export function WaitingPanel({ code, connection, onLeave }: { code: string; connection: ConnectionState; onLeave: () => void }) {
+/** The private link to send, with Copy and (where the browser has it) Share. */
+export function InviteLink({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const url = typeof window === "undefined" ? "" : inviteUrl(window.location.origin, code);
@@ -24,30 +24,37 @@ export function WaitingPanel({ code, connection, onLeave }: { code: string; conn
   };
 
   return (
+    <div className="flex items-stretch gap-2">
+      <input
+        ref={input}
+        readOnly
+        value={url}
+        aria-label="Invite link"
+        onFocus={(e) => e.currentTarget.select()}
+        className="min-w-0 flex-1 rounded-xl border border-white/10 bg-zinc-950/70 px-3 py-2 font-mono text-xs text-teal-100"
+      />
+      <button type="button" onClick={copy} className="shrink-0 rounded-xl bg-teal-300 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-teal-200">
+        {copied ? "Copied" : "Copy link"}
+      </button>
+      {canShare && (
+        <button type="button" onClick={() => void navigator.share({ title: "Pokémon battle", text: "Battle me!", url }).catch(() => {})} className="shrink-0 rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/5">
+          Share
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** What the creator sees until their friend arrives: the private link to send. */
+export function WaitingPanel({ code, connection, onLeave }: { code: string; connection: ConnectionState; onLeave: () => void }) {
+  return (
     <div className="mx-auto mt-6 w-full max-w-xl space-y-5 rounded-2xl border border-white/10 bg-zinc-900/60 p-6 text-center" role="status">
       <div className="mx-auto size-10 rounded-full border-2 border-teal-300/70 motion-safe:animate-pulse" aria-hidden />
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Waiting for your friend</h1>
         <p className="mt-1 text-sm text-zinc-400">Send them this link. The battle starts the moment they open it. Only the two of you can ever be in it.</p>
       </div>
-      <div className="flex items-stretch gap-2">
-        <input
-          ref={input}
-          readOnly
-          value={url}
-          aria-label="Invite link"
-          onFocus={(e) => e.currentTarget.select()}
-          className="min-w-0 flex-1 rounded-xl border border-white/10 bg-zinc-950/70 px-3 py-2 font-mono text-xs text-teal-100"
-        />
-        <button type="button" onClick={copy} className="shrink-0 rounded-xl bg-teal-300 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-teal-200">
-          {copied ? "Copied" : "Copy link"}
-        </button>
-        {canShare && (
-          <button type="button" onClick={() => void navigator.share({ title: "Pokémon battle", text: "Battle me!", url }).catch(() => {})} className="shrink-0 rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/5">
-            Share
-          </button>
-        )}
-      </div>
+      <InviteLink code={code} />
       {connection !== "open" && <p className="text-xs text-amber-200">Connection lost: reconnecting…</p>}
       <p className="text-xs text-zinc-500">Keep this page open (a refresh is fine). Your friend can use any browser.</p>
       <button type="button" onClick={onLeave} className="text-sm text-zinc-400 underline-offset-4 hover:text-white hover:underline">

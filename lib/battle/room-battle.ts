@@ -41,11 +41,13 @@ export interface PendingRequest {
 }
 
 /** The three commands that start a battle: the simulator's rules and seed, and each player's team. The teams are packed into the commands, so a replay needs no generator. */
-export function buildStartCommands(options: { formatKey: string; names: [string, string]; seed?: PRNGSeed; teamSeeds?: [PRNGSeed, PRNGSeed] }): string[] {
+export function buildStartCommands(options: { formatKey: string; names: [string, string]; seed?: PRNGSeed; teamSeeds?: [PRNGSeed, PRNGSeed]; teams?: [string, string] }): string[] {
   const format = formatByKey(options.formatKey);
+  if (format.custom && !options.teams) throw new Error(`${format.label} needs both teams.`);
   const seed = options.seed ?? randomSeed();
   const seeds = options.teamSeeds ?? [randomSeed(), randomSeed()];
-  const pack = (i: 0 | 1) => Teams.pack(generateTeam(format, seeds[i]));
+  // "Bring your own team" formats use the packed teams the players handed in (already checked); random ones are generated from the seeds.
+  const pack = (i: 0 | 1) => (format.custom ? options.teams![i] : Teams.pack(generateTeam(format, seeds[i])));
   return [
     `>start ${JSON.stringify({ formatid: format.formatId, seed })}`,
     `>player p1 ${JSON.stringify({ name: options.names[0], team: pack(0) })}`,
