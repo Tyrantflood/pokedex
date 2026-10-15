@@ -113,6 +113,7 @@ export function startOnlineBattle(options: OnlineOptions, events: OnlineEvents):
           forfeit: () => send({ type: "forfeit" }),
           submitTeam: (packed) => send({ type: "team", packed }),
           withdrawTeam: () => send({ type: "unready" }),
+          requestRematch: () => send({ type: "rematch" }),
           destroy: () => destroy(),
         };
         events.onReady(source, { side: message.side, config: message.config, name: message.name });
@@ -120,6 +121,8 @@ export function startOnlineBattle(options: OnlineOptions, events: OnlineEvents):
       }
       case "status":
         return events.onStatus({ phase: message.phase, players: message.players });
+      case "timeout":
+        return; // the notice is also in the battle log (a line), which is where players see it
       case "team-result":
         return events.onTeamResult({ ok: message.ok, errors: message.errors });
       case "battle":

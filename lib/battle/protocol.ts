@@ -49,6 +49,15 @@ export interface MonView {
   teraType: string | null;
 }
 
+/** One Pokémon of a team as shown at Team Preview: its species and typing only (nothing else is revealed). */
+export interface PreviewMon {
+  species: string;
+  spriteId: number;
+  types: string[];
+  level: number;
+  gender: string;
+}
+
 export interface SideView {
   id: SideId;
   name: string;
@@ -57,6 +66,8 @@ export interface SideView {
   /** Index into `mons` of the Pokémon in battle, or -1. */
   active: number;
   conditions: string[];
+  /** The side's whole team as shown at Team Preview (empty in formats without one). */
+  preview: PreviewMon[];
 }
 
 export interface LogEntry {
@@ -119,7 +130,7 @@ export interface LineResult {
 }
 
 export function createView(): BattleView {
-  const side = (id: SideId): SideView => ({ id, name: id === "p1" ? "Player 1" : "Player 2", teamSize: 6, mons: [], active: -1, conditions: [] });
+  const side = (id: SideId): SideView => ({ id, name: id === "p1" ? "Player 1" : "Player 2", teamSize: 6, mons: [], active: -1, conditions: [], preview: [] });
   return { gen: 9, turn: 0, sides: { p1: side("p1"), p2: side("p2") }, weather: "", terrain: "", fieldEffects: [], log: [], winner: null };
 }
 
@@ -296,6 +307,20 @@ export function applyLine(view: BattleView, line: string, ownSide: SideId, looku
     case "player": {
       const side = view.sides[arg(0) as SideId];
       if (side && arg(1)) side.name = arg(1);
+      return quiet;
+    }
+    case "clearpoke":
+      view.sides.p1.preview = [];
+      view.sides.p2.preview = [];
+      return quiet;
+    case "poke": {
+      // Team Preview: every Pokémon of both teams, shown to both players ("Zacian-*" hides the forme that Rusted Sword would change).
+      const side = view.sides[arg(0) as SideId];
+      if (!side) return quiet;
+      const details = parseDetails(arg(1));
+      const species = details.species.replace(/-\*$/, "");
+      const info = lookups.species(species);
+      side.preview.push({ species, spriteId: info.spriteId, types: info.types, level: details.level, gender: details.gender });
       return quiet;
     }
     case "teamsize": {

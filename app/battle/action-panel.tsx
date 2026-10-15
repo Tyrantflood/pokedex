@@ -3,11 +3,15 @@
 import { useState } from "react";
 import { battleSpriteUrls } from "@/lib/battle/ids";
 import { PLACEHOLDER_URL } from "@/lib/battle/sprite-chain";
-import type { ParsedRequest, RequestMon } from "@/lib/battle/protocol";
+import type { ParsedRequest, RequestMon, SideView } from "@/lib/battle/protocol";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { BattleState } from "./use-battle-session";
 import { HpBar, StatusChip, TypeChip } from "./ui";
+
+
+/** The simulator's refusals start with a tag like "[Invalid choice]"; the player only needs the rest. */
+const REFUSAL_PREFIX = /^\[.*?\]\s*/;
 
 type Special = "mega" | "ultra" | "z" | "dynamax" | "tera";
 const SUFFIX: Record<Special, string> = { mega: " mega", ultra: " ultra", z: " zmove", dynamax: " dynamax", tera: " terastallize" };
@@ -19,8 +23,75 @@ export function ActionPanel({ state, onChoose }: { state: BattleState; onChoose:
   if (!request || !helpers) {
     return <Notice>{view.turn === 0 ? "Setting up the battle…" : "Watching the turn play out…"}</Notice>;
   }
+  if (request.teamPreview) {
+    const foe = view.sides[state.ownSide === "p1" ? "p2" : "p1"];
+    return <PreviewChoices key={request.rqid} request={request} foe={foe} helpers={helpers} onChoose={onChoose} refused={refused} />;
+  }
   // Keyed by request, so the toggle resets for every turn.
   return <Choices key={request.rqid} request={request} helpers={helpers} onChoose={onChoose} refused={refused} />;
+}
+
+/**
+ * Team Preview: both teams are on show (the other side's by species and typing only) and you choose your lead. The rest of your team keeps its
+ * order. Nothing here can be taken back once chosen, as in the real game.
+ */
+function PreviewChoices({ request, foe, helpers, onChoose, refused }: { request: ParsedRequest; foe: SideView; helpers: NonNullable<BattleState["helpers"]>; onChoose: (choice: string) => void; refused: string | null }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-zinc-900/60 p-3 sm:p-4">
+      <p className="mb-2 text-sm font-semibold text-teal-100">Team preview: choose your lead</p>
+      <section aria-label={`${foe.name}'s team`} className="mb-3">
+        <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">{foe.name}&apos;s team</h3>
+        <ul className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          {foe.preview.length === 0 ? (
+            <li className="col-span-full text-sm text-zinc-500">Waiting for the teams to be shown…</li>
+          ) : (
+            foe.preview.map((mon, i) => (
+              <li key={i} className="flex flex-col items-center gap-1 rounded-xl border border-white/10 bg-zinc-800/40 p-1.5 text-center">
+                <TileSprite spriteId={mon.spriteId} />
+                <span className="w-full truncate text-[11px] font-semibold text-white">{mon.species}</span>
+                <span className="flex flex-wrap justify-center gap-0.5">
+                  {mon.types.map((t) => (
+                    <TypeChip key={t} type={t} className="px-1.5 text-[9px]" />
+                  ))}
+                </span>
+              </li>
+            ))
+          )}
+        </ul>
+      </section>
+      <section aria-label="Your team">
+        <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">Your team: tap a Pokémon to lead with</h3>
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          {request.team.map((member, i) => {
+            const types = helpers.lookups.species(member.species).types;
+            return (
+              <button
+                key={member.nickname}
+                type="button"
+                onClick={() => onChoose(`team ${i + 1}`)}
+                title={[member.ability && `Ability: ${member.ability}`, member.item && `Item: ${member.item}`, member.moves.length && `Moves: ${member.moves.join(", ")}`].filter(Boolean).join(", ")}
+                aria-label={`Lead with ${member.species}`}
+                className="flex flex-col items-center gap-1 rounded-xl border border-white/10 bg-zinc-800/60 p-1.5 text-center transition-colors hover:border-teal-300/50 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-teal-300"
+              >
+                <TileSprite spriteId={helpers.lookups.species(member.species).spriteId} />
+                <span className="w-full truncate text-[11px] font-semibold text-white">{member.species}</span>
+                <span className="flex flex-wrap justify-center gap-0.5">
+                  {types.map((t) => (
+                    <TypeChip key={t} type={t} className="px-1.5 text-[9px]" />
+                  ))}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+      {refused && (
+        <p className="mt-2 text-xs text-red-300" role="alert">
+          That choice wasn&apos;t allowed ({refused.replace(REFUSAL_PREFIX, "") || "try another"}).
+        </p>
+      )}
+    </div>
+  );
 }
 
 function Notice({ children }: { children: React.ReactNode }) {

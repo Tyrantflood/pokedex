@@ -89,6 +89,7 @@ class Client {
 
 let rotation = 0;
 function answer(request: ParsedRequest): string {
+  if (request.teamPreview) return `team ${1 + (rotation++ % request.team.length)}`;
   if (request.forceSwitch || !request.active) {
     const slot = request.team.findIndex((p) => !p.active && (request.reviving ? p.fainted : !p.fainted));
     return slot >= 0 ? `switch ${slot + 1}` : "default";
@@ -255,6 +256,69 @@ test("a bring-your-own-team room: the server checks each team, starts when both 
   await playOut(a, b);
   await a.until(() => a.over && b.over, 15000, "the result");
   assert.equal(a.of("status").at(-1)?.phase, "ended");
+  a.drop();
+  b.drop();
+});
+
+test("Team Preview and rematch on the live server: both see both teams and choose leads, then a rematch in the same room starts a new battle", options, async () => {
+  const code = newRoomCode();
+  const a = new Client(code, "live-client-eeee");
+  const b = new Client(code, "live-client-ffff");
+  const teams = recommendedFor("team-gen8ou");
+  await a.connect();
+  a.hello("Prince", { formatKey: "team-gen8ou", turnLimit: 30 });
+  await a.until(() => a.of("welcome").length > 0, 10000, "the creator's welcome");
+  a.send({ type: "team", packed: packSets(teams[0].sets) });
+  await b.connect();
+  b.hello("Friend");
+  await b.until(() => b.of("status").at(-1)?.phase === "teams", 10000, "the teams phase");
+  b.send({ type: "team", packed: packSets(teams[1].sets) });
+  await a.until(() => !!a.request && !!b.request, 20000, "both players being asked for a lead");
+  assert.equal(a.request!.teamPreview, true, "Team Preview is on");
+  assert.equal(a.lines().filter((l) => l.startsWith("|poke|")).length, 12, "all twelve Pokemon are on show");
+  a.send({ type: "choose", choice: "team 3", rqid: a.request!.rqid });
+  b.send({ type: "choose", choice: "team 2", rqid: b.request!.rqid });
+  await a.until(() => a.lines().filter((l) => l.startsWith("|switch|")).length === 2, 15000, "both leads out");
+  assert.ok(a.lines().find((l) => l.startsWith("|switch|p1a"))!.includes(teams[0].sets[2].species), "the chosen lead went out first");
+  // End it, then agree to a rematch.
+  a.send({ type: "forfeit" });
+  await a.until(() => a.over && b.over, 15000, "the result");
+  a.send({ type: "rematch" });
+  await b.until(() => b.of("status").at(-1)?.players.some((p) => p.rematch) === true, 10000, "the friend to see the request");
+  assert.equal(b.of("status").at(-1)?.phase, "ended", "one is not enough");
+  a.request = null;
+  b.request = null;
+  b.send({ type: "rematch" });
+  await b.until(() => b.of("status").at(-1)?.phase === "teams", 15000, "the room to go back to choosing teams");
+  b.send({ type: "team", packed: packSets(teams[2].sets) });
+  a.send({ type: "team", packed: packSets(teams[3].sets) });
+  await a.until(() => !!a.request && a.request.teamPreview && !!b.request, 20000, "the second battle's Team Preview");
+  assert.deepEqual(a.request!.team.map((m) => m.species), teams[3].sets.map((s) => s.species), "the new team is the one in the new battle");
+  a.drop();
+  b.drop();
+});
+
+test("the turn timer: after 90 seconds a random legal choice is made for a player who has not chosen (set BATTLE_SLOW=1; takes a real minute and a half)", { skip: HOST && process.env.BATTLE_SLOW ? false : "set BATTLE_HOST and BATTLE_SLOW=1" }, async () => {
+  const code = newRoomCode();
+  const a = new Client(code, "live-client-gggg");
+  const b = new Client(code, "live-client-hhhh");
+  await a.connect();
+  a.hello("Prince", { formatKey: "gen9", turnLimit: 30 });
+  await a.until(() => a.of("welcome").length > 0, 10000, "the creator's welcome");
+  await b.connect();
+  b.hello("Friend");
+  await a.until(() => !!a.request && !!b.request, 20000, "both players being asked for a first move");
+  const clock = a.of("status").at(-1)!.players.find((p) => p.side === "p1")!.turnInMs;
+  assert.ok(clock !== null && clock > 85_000 && clock <= 90_000, `the clock starts at about 90 s (${clock})`);
+  // a answers, b does not.
+  a.send({ type: "choose", choice: answer(a.request!), rqid: a.request!.rqid });
+  const started = Date.now();
+  await a.until(() => a.of("timeout").length > 0 && b.of("timeout").length > 0, 110_000, "the timeout notice");
+  const waited = (Date.now() - started) / 1000;
+  assert.ok(waited > 60 && waited < 100, `it fired after about 90 s, not ${waited.toFixed(0)}`);
+  assert.deepEqual(a.of("timeout")[0], { type: "timeout", side: "p2", name: "Friend" });
+  await a.until(() => a.lines().some((l) => l.startsWith("|turn|2")), 15000, "the turn to be played with the random choice");
+  assert.ok(a.lines().some((l) => l.includes("ran out of time")));
   a.drop();
   b.drop();
 });

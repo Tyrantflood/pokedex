@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { PokemonType } from "@/lib/pokemon-types";
-import { analyseTeam, type TypeExposure } from "@/lib/team";
+import { analyseTeam, type TypeChart, type TypeExposure } from "@/lib/team";
 import { TYPE_COLORS } from "@/lib/type-colors";
 
 export function TypePill({ type, children }: { type: PokemonType; children?: React.ReactNode }) {
@@ -38,10 +38,11 @@ export interface CoverageMember {
 
 /**
  * The team type coverage panel: what the whole team is weak to, resists, and has no answer for. Shared by the Pokédex team bar and the
- * battle team builder, so both read the same chart (lib/type-chart.ts) and the same maths (`analyseTeam`). `title` is each chip's tooltip.
+ * battle team builder, so both read the same maths (`analyseTeam`). Without `chart` it is the site's modern chart (lib/type-chart.ts); the team
+ * builder passes the format's own generation chart.
  */
-export function CoverageSections({ members }: { members: CoverageMember[] }) {
-  const analysis = useMemo(() => analyseTeam(members.map((m) => m.types)), [members]);
+export function CoverageSections({ members, chart }: { members: CoverageMember[]; chart?: TypeChart }) {
+  const analysis = useMemo(() => analyseTeam(members.map((m) => m.types), chart), [members, chart]);
 
   /** "Charizard ×4, Blastoise ×2": who is behind a chip's number. */
   const who = (e: TypeExposure) =>

@@ -41,6 +41,9 @@ export interface TeamStore {
   teams: SavedTeam[];
 }
 
+/** A format id without its custom rules ("gen9ou@@@..."): what a team's legality depends on. */
+export const rulesOf = (formatId: string) => formatId.split("@@@")[0];
+
 export const emptyStore = (): TeamStore => ({ version: TEAMS_VERSION, teams: [] });
 
 const asText = (value: unknown, max = 40): string => (typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f|]/g, "").slice(0, max) : "");

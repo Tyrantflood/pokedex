@@ -38,7 +38,8 @@ export class BattleRoom extends Server<Env> {
       deleteAll: () => this.ctx.storage.deleteAll(),
     };
     const forfeitAfterMs = Number(this.env.FORFEIT_AFTER_MS) || undefined;
-    this.logic = new RoomLogic(this.name, io, storage, { forfeitAfterMs });
+    const turnMs = Number(this.env.TURN_MS) || undefined;
+    this.logic = new RoomLogic(this.name, io, storage, { forfeitAfterMs, turnMs });
     // Sockets that stayed open while the object was evicted still know where they sit.
     for (const connection of this.getConnections<Seat | null>()) this.logic.restoreConnection(connection.id, connection.state ?? null);
     await this.logic.load();

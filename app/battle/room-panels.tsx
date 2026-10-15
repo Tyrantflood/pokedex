@@ -1,46 +1,71 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { inviteUrl } from "@/lib/battle/room-config";
+import { inviteUrl, SHARE_TITLE, shareMessage, shareMethod } from "@/lib/battle/room-config";
 import type { SideId } from "@/lib/battle/protocol";
 import type { ConnectionState } from "@/lib/battle/online-engine";
 import type { RoomState } from "./use-battle-session";
 
-/** The private link to send, with Copy and (where the browser has it) Share. */
+/**
+ * The private link to send. "Copy link" copies the link alone. "Share" sends the message "Battle me on DEX-LINK: <link>": through the phone's own
+ * share sheet on a touch device that has one, and by copying that message on a desktop.
+ */
 export function InviteLink({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"link" | "message" | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const url = typeof window === "undefined" ? "" : inviteUrl(window.location.origin, code);
-  const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+  const message = shareMessage(url);
+  const method = typeof window === "undefined" ? "copy" : shareMethod({ canShare: typeof navigator.share === "function", touch: window.matchMedia("(pointer: coarse)").matches });
+
+  const flash = (what: "link" | "message") => {
+    setCopied(what);
+    setTimeout(() => setCopied(null), 2000);
+  };
+  const share = async () => {
+    if (method === "native") {
+      try {
+        await navigator.share({ title: SHARE_TITLE, text: message });
+      } catch {
+        /* the person closed the share sheet */
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(message);
+      flash("message");
+    } catch {
+      input.current?.select(); // clipboard blocked: the link is selected for them to copy
+    }
+  };
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      flash("link");
     } catch {
       input.current?.select(); // clipboard blocked: leave it selected for the person to copy
     }
   };
 
   return (
-    <div className="flex items-stretch gap-2">
-      <input
-        ref={input}
-        readOnly
-        value={url}
-        aria-label="Invite link"
-        onFocus={(e) => e.currentTarget.select()}
-        className="min-w-0 flex-1 rounded-xl border border-white/10 bg-zinc-950/70 px-3 py-2 font-mono text-xs text-teal-100"
-      />
-      <button type="button" onClick={copy} className="shrink-0 rounded-xl bg-teal-300 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-teal-200">
-        {copied ? "Copied" : "Copy link"}
-      </button>
-      {canShare && (
-        <button type="button" onClick={() => void navigator.share({ title: "Pokémon battle", text: "Battle me!", url }).catch(() => {})} className="shrink-0 rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/5">
-          Share
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-stretch gap-2">
+        <input
+          ref={input}
+          readOnly
+          value={url}
+          aria-label="Invite link"
+          onFocus={(e) => e.currentTarget.select()}
+          className="min-w-0 flex-1 basis-48 rounded-xl border border-white/10 bg-zinc-950/70 px-3 py-2 font-mono text-xs text-teal-100"
+        />
+        <button type="button" onClick={copy} className="shrink-0 rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/5">
+          {copied === "link" ? "Link copied" : "Copy link"}
         </button>
-      )}
+        <button type="button" onClick={() => void share()} className="shrink-0 rounded-xl bg-teal-300 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-teal-200">
+          {copied === "message" ? "Message copied" : "Share"}
+        </button>
+      </div>
+      <p className="text-xs text-zinc-500">{method === "native" ? "Share opens your phone's share sheet with:" : "Share copies this message:"} {message}</p>
     </div>
   );
 }
@@ -111,6 +136,37 @@ function AwayCountdown({ name, forfeitInMs, since }: { name: string; forfeitInMs
     <p className="rounded-lg border border-amber-300/40 bg-amber-300/10 px-3 py-1.5 text-center text-xs font-semibold text-amber-100" role="status">
       {name} has disconnected.{" "}
       {seconds > 0 ? `If they aren't back in ${seconds} s they forfeit and you win.` : "Forfeiting now…"}
+    </p>
+  );
+}
+
+const clock = (ms: number) => {
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+};
+
+/** The turn timer: how long you have to choose (or, once you have, how long your friend has). When it runs out a random legal choice is made. */
+export function TurnTimer({ room, ownSide }: { room: RoomState; ownSide: SideId }) {
+  const you = room.players.find((p) => p.side === ownSide);
+  const friend = room.players.find((p) => p.side !== ownSide);
+  const target = you?.turnInMs != null ? you : friend?.turnInMs != null ? friend : null;
+  if (!target) return null;
+  return <TurnCountdown key={`${target.side}:${room.statusAt}`} mine={target === you} name={target.name} turnInMs={target.turnInMs!} since={room.statusAt} />;
+}
+
+function TurnCountdown({ mine, name, turnInMs, since }: { mine: boolean; name: string; turnInMs: number; since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, []);
+  const left = Math.max(0, turnInMs - (now - since));
+  const urgent = left <= 15_000;
+  const tone = left <= 10_000 ? "border-red-400/50 bg-red-500/15 text-red-100" : urgent ? "border-amber-300/50 bg-amber-300/10 text-amber-100" : "border-white/10 bg-zinc-900/60 text-zinc-200";
+  return (
+    <p className={`flex items-center justify-between rounded-xl border px-3 py-1.5 text-xs font-semibold ${tone}`} role="timer" aria-label={mine ? "Time left to choose" : `Time left for ${name} to choose`}>
+      <span>{mine ? "Your turn" : `Waiting for ${name}`}</span>
+      <span className="font-mono text-sm tabular-nums">{clock(left)}</span>
     </p>
   );
 }

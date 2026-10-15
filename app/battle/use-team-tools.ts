@@ -22,7 +22,7 @@ export interface TeamTools {
 
 /**
  * Loads the simulator (about 1.2 MB gzip, only on the pages that build or validate teams) and the format's rules. `formatId` is the
- * simulator's own id, e.g. "gen9ou@@@!Team Preview".
+ * simulator's own id, e.g. "gen9ou".
  */
 export function useTeamTools(formatId: string | null): TeamTools {
   const [check, setCheck] = useState<CheckModule | null>(null);

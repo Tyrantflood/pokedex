@@ -194,7 +194,8 @@ export function useBattleSession(spec: SessionSpec | null, options: { muted: boo
         }
         if (cancelled) return;
         const over = draft.winner !== null;
-        publish({ status: over ? "over" : "playing", request: over ? null : lastRequest.current, refused: null });
+        // A friend battle's room may meanwhile have moved on to choosing teams (a rematch): don't drag the screen back to a battle.
+        if (!cancelled) setState((s) => ({ ...s, view: cloneView(draft), status: over ? "over" : s.status === "teams" || s.status === "waiting" ? s.status : "playing", request: over ? null : lastRequest.current, refused: null }));
       } finally {
         pumping = false;
       }
@@ -241,16 +242,17 @@ export function useBattleSession(spec: SessionSpec | null, options: { muted: boo
               if (cancelled) return;
               setState((s) => ({
                 ...s,
+                // "over" is set by the log reaching its end; a rematch (the room going back to teams or to playing) takes the screen out of it.
                 status:
-                  s.status === "over"
-                    ? "over"
-                    : status.phase === "waiting"
-                      ? "waiting"
-                      : status.phase === "teams"
-                        ? "teams"
-                        : s.status === "waiting" || s.status === "teams" || s.status === "loading"
+                  status.phase === "waiting"
+                    ? "waiting"
+                    : status.phase === "teams"
+                      ? "teams"
+                      : status.phase === "playing"
+                        ? s.status === "waiting" || s.status === "teams" || s.status === "loading" || s.status === "over"
                           ? "playing"
-                          : s.status,
+                          : s.status
+                        : s.status,
                 room: s.room ? { ...s.room, phase: status.phase, players: status.players, statusAt: Date.now() } : s.room,
               }));
             },
@@ -303,10 +305,11 @@ export function useBattleSession(spec: SessionSpec | null, options: { muted: boo
     setState((s) => ({ ...s, teamResult: null }));
     battleRef.current?.submitTeam?.(packed);
   }, []);
+  const requestRematch = useCallback(() => battleRef.current?.requestRematch?.(), []);
   const withdrawTeam = useCallback(() => {
     setState((s) => ({ ...s, teamResult: null }));
     battleRef.current?.withdrawTeam?.();
   }, []);
 
-  return { state, choose, forfeit, submitTeam, withdrawTeam };
+  return { state, choose, forfeit, submitTeam, withdrawTeam, requestRematch };
 }

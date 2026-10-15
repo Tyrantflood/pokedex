@@ -10,3 +10,11 @@ export function battleHost(envHost: string | undefined, pageHostname: string): s
 }
 
 export const inviteUrl = (origin: string, code: string) => `${origin}/battle?room=${code}`;
+
+export const SHARE_TITLE = "DEX-LINK battle";
+
+/** The message an invite is shared as. */
+export const shareMessage = (url: string) => `Battle me on DEX-LINK: ${url}`;
+
+/** How the Share button works: phones and tablets (a touch screen that has the native share sheet) open it; everything else copies the message. */
+export const shareMethod = (env: { canShare: boolean; touch: boolean }): "native" | "copy" => (env.canShare && env.touch ? "native" : "copy");

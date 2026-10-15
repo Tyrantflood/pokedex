@@ -22,15 +22,14 @@ const MECHANICS: Record<number, string> = {
 
 /**
  * "Bring your own team" formats: Smogon's OU tier for each generation, National Dex (Gen 9) and Anything Goes (Gen 9, no bans at all). The
- * simulator checks teams against each format's own rules and bans. No Team Preview (the first Pokémon on the team leads), like the random
- * formats, so there is no extra lead-selection step; the Endless Battle Clause is part of every one of these tiers.
+ * simulator checks teams against each format's own rules and bans. They keep the simulator's own Team Preview rule: from Gen 5 on both players see
+ * each other's six Pokémon and choose a lead, as on Showdown (Gens 1-4 never had one). The Endless Battle Clause is part of every one of these tiers.
  */
 function teamFormats(): BattleFormat[] {
   const ou = gens.map((gen) => ({
     key: `team-gen${gen}ou`,
     label: `Gen ${gen} OU`,
-    // Gens 1-4 have no Team Preview rule to remove (the simulator refuses to remove a rule that isn't there).
-    formatId: gen >= 5 ? `gen${gen}ou@@@!Team Preview` : `gen${gen}ou`,
+    formatId: `gen${gen}ou`,
     generator: "",
     gen,
     note: `Smogon's OverUsed tier for Generation ${gen}. Bring a team that passes the simulator's validator.`,
@@ -40,7 +39,7 @@ function teamFormats(): BattleFormat[] {
     {
       key: "team-natdex",
       label: "National Dex",
-      formatId: "gen9nationaldex@@@!Team Preview",
+      formatId: "gen9nationaldex",
       generator: "",
       gen: 9,
       note: "Gen 9 mechanics with every Pokémon back, past generations' moves and Mega Evolution. Smogon's National Dex tier.",
@@ -50,7 +49,7 @@ function teamFormats(): BattleFormat[] {
     {
       key: "team-ag",
       label: "Anything Goes",
-      formatId: "gen9anythinggoes@@@!Team Preview",
+      formatId: "gen9anythinggoes",
       generator: "",
       gen: 9,
       note: "Gen 9 with nothing banned. Any legal Pokémon, move and item; for friends who don't want rules.",

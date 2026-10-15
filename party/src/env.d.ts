@@ -5,6 +5,8 @@ declare namespace Cloudflare {
     ALLOWED_ORIGINS?: string;
     /** Milliseconds a missing player may be gone before forfeiting (default 60000); for tests. */
     FORFEIT_AFTER_MS?: string;
+    /** The turn timer in milliseconds (tests shorten it; the default is 90 s). */
+    TURN_MS?: string;
   }
 }
 interface Env extends Cloudflare.Env {}

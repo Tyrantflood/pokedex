@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { BattleFormat } from "@/lib/battle/formats";
-import type { TeamStore } from "@/lib/battle/my-teams";
+import { rulesOf, type TeamStore } from "@/lib/battle/my-teams";
 import type { RecommendedTeam } from "@/lib/battle/recommended";
 import type { TeamPick } from "./settings";
 import { TagChip, TeamIcons } from "./team-ui";
@@ -60,7 +60,7 @@ export function TeamPicker({
           <ul className="mt-1.5 max-h-56 space-y-1.5 overflow-y-auto" role="radiogroup" aria-label="My teams">
             {store.teams.map((team) => {
               const sameFormat = team.formatKey === format.key;
-              const ready = sameFormat && team.check?.ok === true && team.check.formatId === format.formatId && team.sets.length > 0;
+              const ready = sameFormat && team.check?.ok === true && rulesOf(team.check.formatId) === rulesOf(format.formatId) && team.sets.length > 0;
               const reason = !sameFormat
                 ? "Built for another format"
                 : team.sets.length === 0

@@ -118,10 +118,16 @@ export interface TeamAnalysis {
 const answers = (e: TypeExposure) => e.resist + e.immune;
 const chartOrder = (a: TypeExposure, b: TypeExposure) => CHART_TYPES.indexOf(a.type) - CHART_TYPES.indexOf(b.type);
 
-/** Combines every member's typing against every attacking type, with the same chart (and dual-type maths) as everywhere else. */
-export function analyseTeam(memberTypes: PokemonType[][]): TeamAnalysis {
+/** How hard an attacking type hits a defender with these types (0, 0.25, 0.5, 1, 2, 4). */
+export type TypeChart = (attack: PokemonType, defenders: PokemonType[]) => number;
+
+/**
+ * Combines every member's typing against every attacking type. The Pokédex uses the site's chart (the modern one, `effectiveness`); the battle
+ * team builder passes the selected format's own chart from the simulator's data, which differs in Gens 1-5.
+ */
+export function analyseTeam(memberTypes: PokemonType[][], chart: TypeChart = effectiveness): TeamAnalysis {
   const exposures: TypeExposure[] = CHART_TYPES.map((type) => {
-    const perMember = memberTypes.map((types) => effectiveness(type, types));
+    const perMember = memberTypes.map((types) => chart(type, types));
     return {
       type,
       weak: perMember.filter((m) => m > 1).length,

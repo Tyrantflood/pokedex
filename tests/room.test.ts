@@ -31,8 +31,8 @@ test("names are cleaned, bounded and never empty", () => {
 });
 
 test("only real choices pass: moves 1-4 with one special, switches 1-6, default", () => {
-  for (const ok of ["move 1", "move 4", "move 2 mega", "move 3 terastallize", "move 1 zmove", "move 1 dynamax", "switch 1", "switch 6", "default"]) assert.ok(isValidChoice(ok), ok);
-  for (const bad of ["move 0", "move 5", "move 1 explode", "switch 7", "switch", "team 123456", "forfeit", ">p1 move 1", "move 1\n>forcewin p1", "MOVE 1", "move 1 ", "", null, 5, "undo", "shift"]) assert.equal(isValidChoice(bad), false, String(bad));
+  for (const ok of ["move 1", "move 4", "move 2 mega", "move 3 terastallize", "move 1 zmove", "move 1 dynamax", "switch 1", "switch 6", "default", "team 1", "team 3", "team 312456"]) assert.ok(isValidChoice(ok), ok);
+  for (const bad of ["move 0", "move 5", "move 1 explode", "switch 7", "switch", "team 0", "team 7", "team", "team 1234567", "team 1,2", "forfeit", ">p1 move 1", "move 1\n>forcewin p1", "MOVE 1", "move 1 ", "", null, 5, "undo", "shift"]) assert.equal(isValidChoice(bad), false, String(bad));
 });
 
 test("client messages are parsed defensively", () => {
@@ -132,16 +132,26 @@ class Rig {
     return this.messages(connection).filter((m): m is Extract<ServerMessage, { type: T }> => m.type === type);
   }
 
+  /** The battle messages this connection has been sent for the current battle: a rematch starts with an empty "instant" message, and what came before it is the old battle. */
+  private current(connection: string) {
+    const all = this.of(connection, "battle");
+    let start = 0;
+    all.forEach((m, i) => {
+      if (m.instant && m.lines.length === 0 && m.request === null) start = i + 1;
+    });
+    return all.slice(start);
+  }
+
   /** Every protocol line this connection has been sent, in order. */
   lines(connection: string) {
-    return this.of(connection, "battle").flatMap((m) => m.lines);
+    return this.current(connection).flatMap((m) => m.lines);
   }
 
   /** The newest request this connection was sent, if it has not been answered. */
   request(connection: string) {
     if (this.lines(connection).some((l) => l.startsWith("|win|") || l === "|tie")) return null;
     let current: ReturnType<typeof parseRequest> | null = null;
-    for (const m of this.of(connection, "battle")) {
+    for (const m of this.current(connection)) {
       if (m.request) {
         const parsed = parseRequest(m.request);
         current = parsed.wait ? null : parsed;
@@ -177,6 +187,7 @@ function anyMove(moves: { disabled: boolean; pp: number | null }[]): number {
 
 /** A legal answer to a request: a usable move (a choice item or Encore can lock the others), or the first healthy switch. */
 function answerFor(request: NonNullable<ReturnType<typeof parseRequest>>): string {
+  if (request.teamPreview) return `team ${1 + (rotation++ % request.team.length)}`; // a lead from the whole team, rotating
   if (request.forceSwitch || !request.active) {
     const slot = request.team.findIndex((p) => !p.active && (request.reviving ? p.fainted : !p.fainted));
     return slot >= 0 ? `switch ${slot + 1}` : "default";
@@ -190,7 +201,9 @@ async function playTurn(rig: Rig, conns: { a: string; b: string }) {
     const request = rig.request(conn);
     if (!request) continue;
     let choice = "default";
-    if (request.forceSwitch || !request.active) {
+    if (request.teamPreview) {
+      choice = `team ${1 + (rotation++ % request.team.length)}`;
+    } else if (request.forceSwitch || !request.active) {
       const slot = request.team.findIndex((p) => !p.active && (request.reviving ? p.fainted : !p.fainted));
       if (slot >= 0) choice = `switch ${slot + 1}`;
     } else {
@@ -729,7 +742,7 @@ test("custom-team room: a team can be taken back before the battle starts, and r
   assert.equal((await submit(random, r, t1.packed)).ok, false, "random teams: nothing to hand in");
 });
 
-test("custom-team room: nothing about the other team leaks, in status or in what is sent", async () => {
+test("custom-team room: Team Preview shows both teams' species to both players, but nothing else about the other team (no moves, items, abilities)", async () => {
   const [t1, t2] = teamsOf("team-gen9ou");
   const rig = new Rig();
   const a = rig.connection();
@@ -738,12 +751,64 @@ test("custom-team room: nothing about the other team leaks, in status or in what
   await rig.hello(b, B, "Friend");
   await submit(rig, a, t1.packed);
   await submit(rig, b, t2.packed);
-  const mine = new Set(t1.sets.map((s) => s.species));
-  const hiddenFromA = t2.sets.map((s) => s.species).filter((s) => !mine.has(s) && s !== t2.sets[0].species);
+  // At Team Preview: each player is asked for a lead, and has been shown all twelve Pokemon.
+  for (const conn of [a, b]) assert.equal(rig.request(conn)?.teamPreview, true, "asked to choose a lead");
+  assert.equal(rig.lines(a).filter((l) => l.startsWith("|poke|")).length, 12);
   const sentToA = JSON.stringify(rig.messages(a));
-  for (const species of hiddenFromA) assert.ok(!sentToA.includes(species), `${species} (an unrevealed Pokemon of the friend) was sent to the host`);
-  assert.ok(sentToA.includes(t2.sets[0].species), "the lead is shown, as in any battle");
+  for (const set of t2.sets) assert.ok(sentToA.includes(set.species), `${set.species} is on show at Team Preview`);
+  const mineStrings = new Set([...t1.sets.flatMap((s) => [s.item, s.ability, ...s.moves]), ...t1.sets.map((s) => s.species)]);
+  for (const set of t2.sets) {
+    for (const secret of [set.item, set.ability, ...set.moves]) {
+      if (secret && !mineStrings.has(secret)) assert.ok(!sentToA.includes(secret), `${secret} (${set.species}'s) leaked at Team Preview`);
+    }
+  }
   for (const m of rig.of(a, "status")) assert.ok(!JSON.stringify(m).includes("packed"));
+});
+
+test("Team Preview: each player chooses a lead, the battle opens with those two, and the rest of the order is kept", async () => {
+  const [t1, t2] = teamsOf("team-gen8ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  const b = rig.connection();
+  await rig.hello(a, A, "Prince", { formatKey: "team-gen8ou", turnLimit: 30 });
+  await rig.hello(b, B, "Friend");
+  await submit(rig, a, t1.packed);
+  await submit(rig, b, t2.packed);
+  const pa = rig.request(a)!;
+  const pb = rig.request(b)!;
+  assert.ok(pa.teamPreview && pb.teamPreview);
+  assert.deepEqual(pa.team.map((m) => m.species), t1.sets.map((s) => s.species));
+  await rig.send(a, { type: "choose", choice: "team 3", rqid: pa.rqid });
+  assert.equal(rig.lines(a).filter((l) => l.startsWith("|switch|")).length, 0, "nobody leads until both have chosen");
+  await rig.send(b, { type: "choose", choice: "team 5", rqid: pb.rqid });
+  for (const conn of [a, b]) {
+    const switches = rig.lines(conn).filter((l) => l.startsWith("|switch|"));
+    assert.equal(switches.length, 2);
+    assert.ok(switches[0].includes(t1.sets[2].species), `${conn}: p1 leads with their third Pokemon`);
+    assert.ok(switches[1].includes(t2.sets[4].species), `${conn}: p2 leads with their fifth Pokemon`);
+  }
+  const mine = rig.request(a)!;
+  assert.equal(mine.teamPreview, false);
+  assert.equal(mine.team[0].species, t1.sets[2].species, "the lead is first in the request now");
+  assert.deepEqual(mine.team.slice(1).map((m) => m.species), t1.sets.filter((_, i) => i !== 2).map((s) => s.species), "the rest keep their order");
+  // A second answer to the preview is refused (it was answered), and a malformed one never reaches the simulator.
+  await rig.send(a, { type: "choose", choice: "team 1", rqid: pa.rqid });
+  assert.ok(rig.of(a, "battle").at(-1)?.error);
+  assert.equal(parseClientMessage(JSON.stringify({ type: "choose", choice: "team 9", rqid: 1 })), null);
+});
+
+test("Gens 1-4 have no Team Preview in the simulator, so the battle opens straight on the first Pokemon", async () => {
+  const [t1, t2] = teamsOf("team-gen4ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  const b = rig.connection();
+  await rig.hello(a, A, "Prince", { formatKey: "team-gen4ou", turnLimit: 30 });
+  await rig.hello(b, B, "Friend");
+  await submit(rig, a, t1.packed);
+  await submit(rig, b, t2.packed);
+  assert.equal(rig.request(a)!.teamPreview, false);
+  assert.ok(rig.lines(a).some((l) => l.startsWith("|switch|p1a") && l.includes(t1.sets[0].species)));
+  assert.equal(rig.lines(a).filter((l) => l.startsWith("|poke|")).length, 0);
 });
 
 test("custom-team room: a restart while teams are being picked, and again mid-battle, loses nothing", async () => {
@@ -770,7 +835,7 @@ test("custom-team room: a restart while teams are being picked, and again mid-ba
   assert.equal(rig.of(a3, "battle")[0].instant, true);
   assert.equal(rig.lines(a3).length, before.a, "the host's log is rebuilt exactly");
   assert.equal(rig.lines(b3).length, before.b, "and the friend's");
-  assert.deepEqual(rig.request(a3)!.team.map((m) => m.species), t1.sets.map((s) => s.species));
+  assert.deepEqual(rig.request(a3)!.team.map((m) => m.species).sort(), t1.sets.map((s) => s.species).sort(), "the same six (the lead may have moved to the front)");
   await playToEnd(rig, { a: a3, b: b3 });
   assert.equal(rig.logic.snapshot().meta?.phase, "ended");
 });
@@ -790,4 +855,196 @@ test("every custom format starts a battle from recommended teams and plays to th
     assert.equal(rig.logic.snapshot().meta?.phase, "ended", `${key} did not finish`);
   }
   assert.ok(validateSets(toolsFor("gen9ou"), recommendedFor("team-gen9ou")[0].sets).ok);
+});
+
+// ---- the turn timer and rematches ---------------------------------------------------------------------------------------
+
+import { randomLegalChoice } from "../lib/battle/timeout-choice";
+import { TURN_MS } from "../lib/battle/room-protocol";
+
+const statusOf = (rig: Rig, conn: string) => rig.of(conn, "status").at(-1)!;
+const turnIn = (rig: Rig, conn: string, side: SideId) => statusOf(rig, conn).players.find((p) => p.side === side)?.turnInMs ?? null;
+
+test("the turn timer: both players are given 90 seconds when a turn starts, and answering stops that player's clock", async () => {
+  assert.equal(TURN_MS, 90_000);
+  const rig = new Rig();
+  const { a, b } = await seated(rig);
+  assert.equal(turnIn(rig, a, "p1"), TURN_MS);
+  assert.equal(turnIn(rig, a, "p2"), TURN_MS);
+  assert.equal(turnIn(rig, b, "p1"), TURN_MS, "both see both clocks");
+  assert.equal(rig.alarmAt, rig.time + TURN_MS, "the room wakes when the first clock runs out");
+  rig.time += 30_000;
+  const request = rig.request(a)!;
+  await rig.send(a, { type: "choose", choice: answerFor(request), rqid: request.rqid });
+  assert.equal(turnIn(rig, b, "p1"), null, "the player who answered owes nothing");
+  assert.equal(turnIn(rig, b, "p2"), TURN_MS - 30_000, "the other clock keeps running");
+});
+
+test("the turn timer: a player who runs out of time gets a random legal choice, both are told, and the battle goes on", async () => {
+  const rig = new Rig();
+  const { a, b } = await seated(rig);
+  await playTurn(rig, { a, b }); // past the first turn
+  const start = rig.time;
+  const ra = rig.request(a)!;
+  await rig.send(a, { type: "choose", choice: answerFor(ra), rqid: ra.rqid });
+  assert.equal(rig.alarmAt, start + TURN_MS, "waiting on b only");
+  rig.time = start + TURN_MS + 1;
+  const before = rig.lines(b).length;
+  const turnsBefore = rig.lines(b).filter((l) => l.startsWith("|turn|")).length;
+  await rig.logic.alarm();
+  await rig.logic.flush();
+  const notice = "|-message|Friend ran out of time, so a random choice was made for them.";
+  for (const conn of [a, b]) {
+    assert.ok(rig.lines(conn).includes(notice), "the notice reached both players");
+    assert.deepEqual(rig.of(conn, "timeout").at(-1), { type: "timeout", side: "p2", name: "Friend" });
+  }
+  assert.ok(rig.lines(b).length > before, "the turn was played with the random choice");
+  assert.ok(rig.lines(b).filter((l) => l.startsWith("|turn|")).length > turnsBefore || rig.logic.snapshot().meta?.phase === "ended" || !!rig.request(b)?.forceSwitch, "the battle moved on");
+  assert.equal(rig.logic.snapshot().meta?.phase === "playing" ? turnIn(rig, a, "p1") : null, rig.logic.snapshot().meta?.phase === "playing" ? TURN_MS : null, "a fresh clock for the next turn");
+  // The refresh sees the notice too.
+  const a2 = rig.connection();
+  await rig.hello(a2, A, "Prince");
+  assert.ok(rig.lines(a2).includes(notice));
+});
+
+test("the turn timer: when both are out of time both get a random choice; Team Preview times out with a random lead", async () => {
+  const [t1, t2] = teamsOf("team-gen8ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  const b = rig.connection();
+  await rig.hello(a, A, "Prince", { formatKey: "team-gen8ou", turnLimit: 30 });
+  await rig.hello(b, B, "Friend");
+  await submit(rig, a, t1.packed);
+  await submit(rig, b, t2.packed);
+  assert.equal(rig.request(a)?.teamPreview, true);
+  rig.time += TURN_MS + 5;
+  await rig.logic.alarm();
+  await rig.logic.flush();
+  assert.equal(rig.request(a)!.teamPreview, false, "leads were chosen for both");
+  assert.equal(rig.lines(a).filter((l) => l.startsWith("|switch|")).length, 2);
+  assert.equal(rig.lines(a).filter((l) => l.includes("ran out of time")).length, 2);
+});
+
+test("the turn timer survives the room being evicted: the clock keeps running from when the question was asked", async () => {
+  const rig = new Rig();
+  await seated(rig);
+  const asked = rig.time;
+  rig.time += 40_000;
+  rig.restart();
+  const a2 = rig.connection();
+  await rig.hello(a2, A, "Prince");
+  assert.equal(turnIn(rig, a2, "p1"), TURN_MS - 40_000);
+  assert.equal(rig.alarmAt, asked + TURN_MS);
+});
+
+test("a timed-out choice is a saved command like any other: a restart replays to the same battle", async () => {
+  const rig = new Rig();
+  const { a, b } = await seated(rig);
+  await playTurn(rig, { a, b });
+  rig.time += TURN_MS + 1;
+  await rig.logic.alarm();
+  await rig.logic.flush();
+  const lines = rig.lines(a).filter((l) => !l.includes("ran out of time")).length;
+  rig.restart();
+  const a2 = rig.connection();
+  await rig.hello(a2, A, "Prince");
+  assert.equal(rig.lines(a2).filter((l) => !l.includes("ran out of time")).length, lines, "the same log");
+});
+
+test("random legal choices: only usable moves, healthy switch targets (fainted ones for Revival Blessing), a lead at Team Preview", () => {
+  const mon = (species: string, extra: Record<string, unknown> = {}) => ({ ident: `p1: ${species}`, details: `${species}, L100`, condition: "100/100", active: false, moves: ["tackle"], ...extra });
+  const moves = (list: { id: string; move: string; pp?: number; maxpp?: number; disabled?: boolean }[]) => [{ moves: list }];
+  const ask = (raw: unknown, n = 60) => new Set(Array.from({ length: n }, (_, i) => randomLegalChoice(raw, () => (i % 10) / 10 + 0.01)));
+  // moves: slot 2 is disabled and slot 3 has no PP
+  const move = { active: moves([{ id: "a", move: "A", pp: 5, maxpp: 5 }, { id: "b", move: "B", pp: 5, maxpp: 5, disabled: true }, { id: "c", move: "C", pp: 0, maxpp: 5 }, { id: "d", move: "D", maxpp: 5 }]), side: { pokemon: [mon("Pikachu", { active: true })] } };
+  assert.deepEqual([...ask(move)].sort(), ["move 1", "move 4"]);
+  const forced = { forceSwitch: [true], side: { pokemon: [mon("A", { active: true, condition: "0 fnt" }), mon("B"), mon("C", { condition: "0 fnt" }), mon("D")] } };
+  assert.deepEqual([...ask(forced)].sort(), ["switch 2", "switch 4"]);
+  const revive = { forceSwitch: [true], side: { pokemon: [mon("A", { active: true, reviving: true }), mon("B"), mon("C", { condition: "0 fnt" }), mon("D", { condition: "0 fnt" })] } };
+  assert.deepEqual([...ask(revive)].sort(), ["switch 3", "switch 4"]);
+  const preview = { teamPreview: true, side: { pokemon: [mon("A"), mon("B"), mon("C"), mon("D"), mon("E"), mon("F")] } };
+  const leads = ask(preview);
+  assert.ok(leads.size >= 4 && [...leads].every((l) => /^team [1-6]$/.test(l)));
+  assert.equal(randomLegalChoice({ active: moves([{ id: "a", move: "A", pp: 0, maxpp: 5 }]), side: { pokemon: [mon("P", { active: true })] } }), "default");
+  assert.equal(randomLegalChoice({ forceSwitch: [true], side: { pokemon: [mon("A", { active: true, condition: "0 fnt" })] } }), "default");
+});
+
+test("rematch: nothing happens until both agree, then the room starts a new battle with new teams and a clean log", async () => {
+  const rig = new Rig();
+  const { a, b } = await seated(rig);
+  await rig.send(a, { type: "rematch" });
+  assert.equal(rig.logic.snapshot().meta?.phase, "playing", "no rematch while a battle is on");
+  await rig.send(b, { type: "forfeit" });
+  assert.equal(rig.logic.snapshot().meta?.phase, "ended");
+  assert.deepEqual(statusOf(rig, a).players.map((p) => p.rematch), [false, false]);
+  const firstWinner = rig.logic.snapshot().meta?.winner;
+  await rig.send(a, { type: "rematch" });
+  assert.deepEqual(statusOf(rig, b).players.map((p) => [p.side, p.rematch]), [["p1", true], ["p2", false]], "the friend sees who has agreed");
+  assert.equal(rig.logic.snapshot().meta?.phase, "ended", "one is not enough");
+  await rig.send(b, { type: "rematch" });
+  const snap = rig.logic.snapshot();
+  assert.equal(snap.meta?.phase, "playing");
+  assert.equal(snap.meta?.round, 1);
+  assert.equal(snap.meta?.winner, null);
+  assert.equal(snap.commandCount, 3, "a new battle: start and two players");
+  for (const conn of [a, b]) {
+    const instants = rig.of(conn, "battle").filter((m) => m.instant);
+    assert.ok(instants.at(-1) && instants.at(-1)!.lines.length === 0 && instants.at(-1)!.request === null, "an empty log to start from");
+    const after = rig.messages(conn).slice(rig.messages(conn).lastIndexOf(instants.at(-1)!));
+    assert.ok(after.some((m) => m.type === "battle" && m.lines.some((l) => l.startsWith("|player|"))), "the new battle's opening lines");
+    assert.ok(rig.request(conn), "both are asked for a first move");
+    assert.deepEqual(statusOf(rig, conn).players.map((p) => p.rematch), [false, false]);
+  }
+  assert.ok(firstWinner !== undefined);
+  // The new battle plays out, and a second rematch works.
+  await playToEnd(rig, { a, b });
+  assert.equal(rig.logic.snapshot().meta?.phase, "ended");
+  rig.time += 11_000; // (a whole battle of choices from one connection is more than the 60-messages-per-10-seconds limit)
+  await rig.send(a, { type: "rematch" });
+  await rig.send(b, { type: "rematch" });
+  assert.equal(rig.logic.snapshot().meta?.round, 2);
+  assert.equal(rig.logic.snapshot().meta?.phase, "playing");
+});
+
+test("rematch: a restart afterwards replays only the new battle", async () => {
+  const rig = new Rig();
+  const { a, b } = await seated(rig);
+  await rig.send(a, { type: "forfeit" });
+  await rig.send(a, { type: "rematch" });
+  await rig.send(b, { type: "rematch" });
+  await untilBothAsked(rig, { a, b });
+  const lastInstant = rig.of(a, "battle").filter((m) => m.instant).length;
+  assert.equal(lastInstant, 1);
+  rig.restart();
+  const a2 = rig.connection();
+  const b2 = rig.connection();
+  await rig.hello(a2, A, "Prince");
+  await rig.hello(b2, B, "Friend");
+  const sync = rig.of(a2, "battle")[0];
+  assert.equal(sync.instant, true);
+  assert.ok(!sync.lines.some((l) => l.startsWith("|win|")), "the first battle's ending is not part of the second");
+  assert.equal(rig.logic.snapshot().meta?.round, 1);
+  assert.ok(rig.request(a2) && rig.request(b2));
+  await playToEnd(rig, { a: a2, b: b2 });
+  assert.equal(rig.logic.snapshot().meta?.phase, "ended");
+});
+
+test("rematch in a bring-your-own-team room goes back to choosing teams, then plays on", async () => {
+  const [t1, t2, t3] = teamsOf("team-gen9ou");
+  const rig = new Rig();
+  const a = rig.connection();
+  const b = rig.connection();
+  await rig.hello(a, A, "Prince", teamConfig);
+  await rig.hello(b, B, "Friend");
+  await submit(rig, a, t1.packed);
+  await submit(rig, b, t2.packed);
+  await rig.send(b, { type: "forfeit" });
+  await rig.send(a, { type: "rematch" });
+  await rig.send(b, { type: "rematch" });
+  assert.equal(rig.logic.snapshot().meta?.phase, "teams");
+  assert.deepEqual(statusOf(rig, a).players.map((p) => p.ready), [false, false], "teams are picked afresh");
+  await submit(rig, a, t3.packed);
+  await submit(rig, b, t2.packed);
+  assert.equal(rig.logic.snapshot().meta?.phase, "playing");
+  assert.deepEqual(rig.request(a)!.team.map((m) => m.species), t3.sets.map((s) => s.species), "the new team is the one in the new battle");
 });

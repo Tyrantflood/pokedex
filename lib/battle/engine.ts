@@ -49,6 +49,8 @@ export interface LocalBattle {
   /** Friend battles with "bring your own team": hand in this player's team (the server checks it and answers with onTeamResult), or take it back. */
   submitTeam?(packed: string): void;
   withdrawTeam?(): void;
+  /** Friend battles, after the battle: agree to play again in the same room (it starts when both have). */
+  requestRematch?(): void;
   destroy(): void;
 }
 

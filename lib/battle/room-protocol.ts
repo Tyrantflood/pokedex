@@ -6,6 +6,8 @@ import type { SideId } from "./protocol";
 
 /** A player who has been gone this long forfeits. */
 export const FORFEIT_AFTER_MS = 60_000;
+/** A player has this long to choose each turn (and the lead at Team Preview); when it runs out a random legal choice is made for them. */
+export const TURN_MS = 90_000;
 /** A room nobody has touched for this long is deleted from storage. */
 export const ROOM_TTL_MS = 6 * 60 * 60 * 1000;
 /** Anything bigger than this from a client is refused unread. (A packed team of six is well under 2,000 characters; see MAX_PACKED_TEAM_CHARS.) */
@@ -31,6 +33,10 @@ export interface PlayerStatus {
   ready: boolean;
   /** Milliseconds until this player forfeits for being away, if they are away during a battle. */
   forfeitInMs: number | null;
+  /** Milliseconds this player has left to choose (the turn timer), or null when they owe no choice. */
+  turnInMs: number | null;
+  /** After a battle: this player has agreed to a rematch in the same room. */
+  rematch: boolean;
 }
 
 // ---- browser -> server -------------------------------------------------------------------------------------------------
@@ -43,6 +49,8 @@ export type ClientMessage =
   | { type: "team"; packed: string }
   /** Take the team back, to pick another before the battle starts. */
   | { type: "unready" }
+  /** After a battle: agree to play again in this room. It starts when both players have agreed. */
+  | { type: "rematch" }
   | { type: "forfeit" }
   | { type: "ping" };
 
@@ -55,6 +63,8 @@ export type ServerMessage =
   | { type: "status"; phase: RoomPhase; players: PlayerStatus[] }
   /** Protocol lines for this player only (their side of the simulator's stream), and what they may do next. `instant`: catching up after a refresh. */
   | { type: "battle"; lines: string[]; request: unknown | null; error: string | null; instant?: boolean }
+  /** A player ran out of time and a random legal choice was made for them (shown as a notice; not part of the battle log). */
+  | { type: "timeout"; side: SideId; name: string }
   /** The verdict on a submitted team. */
   | { type: "team-result"; ok: boolean; errors: string[] }
   | { type: "error"; code: ErrorCode; message: string }
@@ -83,8 +93,8 @@ export function sanitizeName(raw: unknown): string {
   return cleaned || "Guest";
 }
 
-/** The only choices the simulator accepts from a player; anything else is refused before it reaches the simulator. */
-export const CHOICE_PATTERN = /^(move [1-4]( (mega|ultra|zmove|dynamax|terastallize))?|switch [1-6]|default)$/;
+/** The only choices the simulator accepts from a player ("team 3" picks a lead at Team Preview, "team 312456" a whole order); anything else is refused before it reaches the simulator. */
+export const CHOICE_PATTERN = /^(move [1-4]( (mega|ultra|zmove|dynamax|terastallize))?|switch [1-6]|team [1-6]{1,6}|default)$/;
 export const isValidChoice = (choice: unknown): choice is string => typeof choice === "string" && CHOICE_PATTERN.test(choice);
 
 /** A packed team as text: not empty, not huge, and no control characters (the simulator's packed format is one line). */
@@ -118,6 +128,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return isPackedTeamText(m.packed) ? { type: "team", packed: m.packed } : null;
     case "unready":
       return { type: "unready" };
+    case "rematch":
+      return { type: "rematch" };
     case "forfeit":
       return { type: "forfeit" };
     case "ping":

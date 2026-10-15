@@ -88,10 +88,42 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
 
   private decide(request: ParsedRequest) {
     if (request.wait) return;
-    if (request.teamPreview) return this.choose("default");
+    if (request.teamPreview) return this.choose(this.chooseLead(request));
     syncRequest(this.view, this.side, request, this.lookups);
     const choice = this.difficulty === "easy" ? this.chooseRandom(request) : this.chooseSmart(request);
     this.choose(choice);
+  }
+
+  // ---- Team Preview: the lead ---------------------------------------------------------------------------------------
+
+  /**
+   * Easy leads with a random Pokémon. Normal looks at the six it can see across the field (species and typing only, as a player could):
+   * a lead scores for the best hit its moves' types make on each of them, less the best hit each of their types makes on it.
+   * The rest of the team keeps its order (the simulator fills it in from the lead alone).
+   */
+  private chooseLead(request: ParsedRequest): string {
+    const count = request.team.length;
+    if (count <= 1) return "default";
+    const foes = this.view.sides[otherSide(this.side)].preview;
+    if (this.difficulty === "easy" || foes.length === 0) return `team ${1 + Math.floor(this.random() * count)}`;
+    const math = this.matchup.math;
+    let best = 1;
+    let bestScore = -Infinity;
+    request.team.forEach((member, i) => {
+      const mine = this.lookups.species(member.species).types;
+      const attacks = this.damagingTypes(member.moves);
+      let score = 0;
+      for (const foe of foes) {
+        score += Math.max(0, ...attacks.map((type) => math.multiplier(type, foe.types)));
+        score -= Math.max(0, ...foe.types.map((type) => math.multiplier(type, mine)));
+      }
+      score += this.random() * 0.01; // break ties without always favouring the first
+      if (score > bestScore) {
+        bestScore = score;
+        best = i + 1;
+      }
+    });
+    return `team ${best}`;
   }
 
   // ---- Easy: any legal move, now and then a switch -----------------------------------------------------------------

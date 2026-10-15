@@ -1,5 +1,5 @@
 import type { PokemonSet } from "@pkmn/sets";
-import { findTeam, type TeamStore } from "@/lib/battle/my-teams";
+import { findTeam, rulesOf, type TeamStore } from "@/lib/battle/my-teams";
 import type { TeamPick } from "./settings";
 
 export interface ChosenTeam {
@@ -26,5 +26,5 @@ export function pickUsable(pick: TeamPick | undefined, store: TeamStore, format:
   if (!pick) return false;
   if (pick.source === "recommended") return pick.id.startsWith(`${format.key}-`);
   const team = findTeam(store, pick.id);
-  return !!team && team.formatKey === format.key && team.sets.length > 0 && team.check?.ok === true && team.check.formatId === format.formatId;
+  return !!team && team.formatKey === format.key && team.sets.length > 0 && team.check?.ok === true && rulesOf(team.check.formatId) === rulesOf(format.formatId);
 }

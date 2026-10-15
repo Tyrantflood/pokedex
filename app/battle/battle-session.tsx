@@ -6,7 +6,7 @@ import { isLastStand } from "@/lib/battle/music-data";
 import { ActionPanel } from "./action-panel";
 import { BattleField } from "./battle-field";
 import { BattleLog } from "./battle-log";
-import { AwayBanner, ConnectionBanner, RoomError, WaitingPanel } from "./room-panels";
+import { AwayBanner, ConnectionBanner, RoomError, TurnTimer, WaitingPanel } from "./room-panels";
 import { RoomTeams } from "./room-teams";
 import { useBattleMusic } from "./use-battle-music";
 import { useBattleSession, type SessionSpec } from "./use-battle-session";
@@ -25,7 +25,7 @@ export function BattleSession({ spec, onRematch, onLeave }: { spec: SessionSpec;
   const muted = mutedRaw === "1";
   const [fast, setFast] = useState(false);
   const [confirmForfeit, setConfirmForfeit] = useState(false);
-  const { state, choose, forfeit, submitTeam, withdrawTeam } = useBattleSession(spec, { muted, fast });
+  const { state, choose, forfeit, submitTeam, withdrawTeam, requestRematch } = useBattleSession(spec, { muted, fast });
   const { view, room } = state;
   const over = state.status === "over";
   const online = spec.kind === "online";
@@ -48,6 +48,7 @@ export function BattleSession({ spec, onRematch, onLeave }: { spec: SessionSpec;
   });
 
   const opponent = room?.players.find((p) => p.side !== state.ownSide);
+  const friendPlayer = opponent;
   const subtitle =
     spec.kind === "cpu" ? (
       <>
@@ -128,9 +129,19 @@ export function BattleSession({ spec, onRematch, onLeave }: { spec: SessionSpec;
                 {online ? "Connecting to the battle…" : "Loading the simulator…"}
               </div>
             )}
-            {over && <ResultOverlay winner={view.winner} playerName={playerName} onRematch={onRematch} onLeave={onLeave} online={online} />}
+            {over && (
+              <ResultOverlay
+                winner={view.winner}
+                playerName={playerName}
+                onRematch={onRematch}
+                onLeave={onLeave}
+                online={online}
+                rematch={room ? { you: !!room.players.find((p) => p.side === state.ownSide)?.rematch, friend: friendPlayer?.rematch ?? false, friendName: friendPlayer?.name ?? "Your friend", friendHere: friendPlayer?.connected ?? false, onAgree: requestRematch } : undefined}
+              />
+            )}
           </div>
         )}
+        {room && !over && state.status === "playing" && <TurnTimer room={room} ownSide={state.ownSide} />}
         {state.status !== "error" && !over && <ActionPanel state={state} onChoose={choose} />}
       </div>
       <BattleLog log={view.log} />
@@ -151,7 +162,18 @@ function ToggleButton({ pressed, onClick, label }: { pressed: boolean; onClick: 
   );
 }
 
-function ResultOverlay({ winner, playerName, onRematch, onLeave, online }: { winner: string | null; playerName: string; onRematch?: () => void; onLeave: () => void; online: boolean }) {
+interface RematchState {
+  /** This player has agreed to play again. */
+  you: boolean;
+  /** The friend has. */
+  friend: boolean;
+  friendName: string;
+  /** The friend still has the room open. */
+  friendHere: boolean;
+  onAgree: () => void;
+}
+
+function ResultOverlay({ winner, playerName, onRematch, onLeave, online, rematch }: { winner: string | null; playerName: string; onRematch?: () => void; onLeave: () => void; online: boolean; rematch?: RematchState }) {
   const won = winner === playerName;
   const title = winner === "" ? "It's a tie" : won ? "You won!" : "You lost";
   return (
@@ -159,12 +181,28 @@ function ResultOverlay({ winner, playerName, onRematch, onLeave, online }: { win
       <div className="w-full max-w-xs rounded-2xl border border-white/15 bg-zinc-900/95 p-5 text-center shadow-2xl" role="dialog" aria-label="Battle result">
         <p className={`text-2xl font-bold ${won ? "text-amber-200" : "text-white"}`}>{title}</p>
         <div className="mt-4 flex flex-col gap-2">
+          {rematch && (
+            <>
+              <button
+                type="button"
+                autoFocus
+                disabled={rematch.you || !rematch.friendHere}
+                onClick={rematch.onAgree}
+                className="rounded-xl bg-teal-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-teal-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {rematch.you ? `Waiting for ${rematch.friendName}…` : "Rematch"}
+              </button>
+              <p className="text-xs text-zinc-400" role="status">
+                {!rematch.friendHere ? `${rematch.friendName} has left the room.` : rematch.friend && !rematch.you ? `${rematch.friendName} wants a rematch.` : rematch.you ? "Your rematch request is in. It starts when they agree." : "A rematch starts when you both agree."}
+              </p>
+            </>
+          )}
           {onRematch && (
             <button type="button" autoFocus onClick={onRematch} className="rounded-xl bg-teal-300 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-teal-200">
               Rematch
             </button>
           )}
-          <button type="button" autoFocus={!onRematch} onClick={onLeave} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold text-zinc-200 hover:bg-white/5">
+          <button type="button" autoFocus={!onRematch && !rematch} onClick={onLeave} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold text-zinc-200 hover:bg-white/5">
             {online ? "Back to the lobby" : "Change settings"}
           </button>
         </div>

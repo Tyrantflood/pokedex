@@ -8,9 +8,11 @@
  */
 import { FORMATS, formatByKey } from "./formats";
 import { BattleHost, buildStartCommands, type HostOutput } from "./room-battle";
+import { randomLegalChoice } from "./timeout-choice";
 import {
   FORFEIT_AFTER_MS,
   isRoomCode,
+  TURN_MS,
   MAX_CLIENT_MESSAGE_CHARS,
   parseClientMessage,
   ROOM_TTL_MS,
@@ -63,10 +65,18 @@ export interface RoomMeta {
   answered?: { p1: number | null; p2: number | null };
   /** "Bring your own team" battles: each player's checked team in packed form, until the battle starts. Never sent to anyone. */
   teams?: { p1: string | null; p2: string | null };
+  /** Which battle in this room this is: 0 for the first, one more for every rematch (each has its own saved commands). */
+  round?: number;
+  /** After a battle: who has agreed to a rematch. */
+  rematch?: { p1: boolean; p2: boolean };
+  /** When each player was last asked to choose (the turn timer runs from here), null when they are not being asked. */
+  turnStart?: { p1: number | null; p2: number | null };
 }
 
 export interface RoomOptions {
   forfeitAfterMs?: number;
+  /** The turn timer (default TURN_MS, 90 s). */
+  turnMs?: number;
   ttlMs?: number;
 }
 
@@ -76,8 +86,10 @@ interface Seat {
 }
 
 const META = "meta";
-const CMD = "cmd:";
-const cmdKey = (n: number) => `${CMD}${String(n).padStart(6, "0")}`;
+/** The first battle's commands are "cmd:000001..." (as they always were); a rematch's are "cmd1:...", "cmd2:...", so each battle replays alone. */
+const cmdPrefix = (round: number) => (round === 0 ? "cmd:" : `cmd${round}:`);
+const cmdKey = (round: number, n: number) => `${cmdPrefix(round)}${String(n).padStart(6, "0")}`;
+const SIDES = ["p1", "p2"] as const;
 
 /** At most this many messages from one connection in a ten-second window. */
 const RATE_LIMIT = 60;
@@ -88,6 +100,7 @@ export class RoomLogic {
   private readonly io: RoomIO;
   private readonly storage: RoomStorage;
   private readonly forfeitAfterMs: number;
+  private readonly turnMs: number;
   private readonly ttlMs: number;
   private meta: RoomMeta | null = null;
   private host: BattleHost | null = null;
@@ -103,6 +116,7 @@ export class RoomLogic {
     this.io = io;
     this.storage = storage;
     this.forfeitAfterMs = options.forfeitAfterMs ?? FORFEIT_AFTER_MS;
+    this.turnMs = options.turnMs ?? TURN_MS;
     this.ttlMs = options.ttlMs ?? ROOM_TTL_MS;
   }
 
@@ -114,12 +128,17 @@ export class RoomLogic {
     this.loaded = true;
     this.meta = (await this.storage.get<RoomMeta>(META)) ?? null;
     if (this.meta && (this.meta.phase === "playing" || this.meta.phase === "ended")) {
-      const commands = await this.storage.list<string>(CMD);
+      const commands = await this.storage.list<string>(cmdPrefix(this.meta.round ?? 0));
       this.commandCount = commands.length;
       this.host = this.newHost(this.meta);
       await this.host.replay(commands);
       if (this.meta.answered) this.host.restoreAnswered(this.meta.answered);
       if (this.host.ended && this.meta.phase !== "ended") await this.endBattle();
+      // A question that was open when the room was evicted keeps its clock; one with no saved start (an older room) starts now.
+      if (this.meta.phase === "playing") {
+        const turnStart = (this.meta.turnStart ??= { p1: null, p2: null });
+        for (const side of SIDES) if (this.host.unanswered(side) && turnStart[side] === null) turnStart[side] = this.io.now();
+      }
     }
   }
 
@@ -138,7 +157,7 @@ export class RoomLogic {
   }
 
   private saveCommand(command: string) {
-    const key = cmdKey(this.commandCount++);
+    const key = cmdKey(this.meta?.round ?? 0, this.commandCount++);
     this.writes = this.writes.then(() => this.storage.put(key, command));
   }
 
@@ -172,6 +191,8 @@ export class RoomLogic {
         return this.submitTeam(connectionId, message.packed);
       case "unready":
         return this.withdrawTeam(connectionId);
+      case "rematch":
+        return this.agreeRematch(connectionId);
       case "forfeit":
         return this.forfeitBy(connectionId);
     }
@@ -272,6 +293,39 @@ export class RoomLogic {
     await this.reschedule();
   }
 
+  /** After a battle, a player agrees to play again here. When both have, the room starts over: new teams (random) or new picks (bring your own). */
+  private async agreeRematch(connectionId: string) {
+    const seat = this.seats.get(connectionId);
+    const meta = this.meta;
+    if (!seat || !meta || meta.phase !== "ended") return;
+    meta.rematch = { p1: meta.rematch?.p1 ?? false, p2: meta.rematch?.p2 ?? false };
+    meta.rematch[seat.side] = true;
+    if (meta.rematch.p1 && meta.rematch.p2 && meta.players.p1 && meta.players.p2) this.resetForRematch(meta);
+    await this.saveMeta();
+    this.broadcastStatus();
+    await this.reschedule();
+  }
+
+  private resetForRematch(meta: RoomMeta) {
+    this.host?.destroy();
+    this.host = null;
+    meta.round = (meta.round ?? 0) + 1;
+    this.commandCount = 0;
+    meta.winner = null;
+    delete meta.answered;
+    meta.disconnectedAt = { p1: null, p2: null };
+    meta.turnStart = { p1: null, p2: null };
+    meta.rematch = { p1: false, p2: false };
+    // Everyone's screen starts from an empty log again.
+    for (const id of this.seats.keys()) this.io.send(id, { type: "battle", lines: [], request: null, error: null, instant: true });
+    if (formatByKey(meta.config.formatKey).custom) {
+      meta.phase = "teams";
+      meta.teams = { p1: null, p2: null };
+    } else {
+      this.startBattle(meta);
+    }
+  }
+
   private async withdrawTeam(connectionId: string) {
     const seat = this.seats.get(connectionId);
     const meta = this.meta;
@@ -290,6 +344,7 @@ export class RoomLogic {
       this.io.send(connectionId, { type: "battle", lines: [], request: pending && !pending.wait && rqid !== pending.rqid ? pending.raw : null, error: `[Refused] ${reason}` });
     } else {
       await this.touch();
+      this.broadcastStatus(); // the turn timer for this player has stopped
     }
   }
 
@@ -315,6 +370,15 @@ export class RoomLogic {
         if (seat.side === output.side) this.io.send(id, { type: "battle", lines: output.lines, request: output.request, error: output.error });
       }
     }
+    const meta = this.meta;
+    if (meta && output.request && !this.host?.ended) {
+      // The turn timer for this player starts when a real question reaches them, and stops when it is answered (the "wait" that follows).
+      const waiting = !!(output.request as { wait?: boolean }).wait;
+      meta.turnStart = { p1: meta.turnStart?.p1 ?? null, p2: meta.turnStart?.p2 ?? null, [output.side]: waiting ? null : this.io.now() };
+      void this.saveMeta();
+      this.broadcastStatus();
+      void this.reschedule();
+    }
     if (this.host?.ended && this.meta && this.meta.phase !== "ended") void this.endBattle();
   }
 
@@ -322,6 +386,8 @@ export class RoomLogic {
     if (!this.meta || !this.host) return;
     this.meta.phase = "ended";
     this.meta.winner = this.host.winner;
+    this.meta.turnStart = { p1: null, p2: null };
+    this.meta.rematch = { p1: false, p2: false };
     this.meta.disconnectedAt = { p1: null, p2: null };
     await this.saveMeta();
     this.broadcastStatus();
@@ -343,8 +409,15 @@ export class RoomLogic {
       const player = meta.players[side];
       if (!player) return [];
       const since = meta.disconnectedAt[side];
-      return [{ side, name: player.name, connected: connected.has(side), ready: !!meta.teams?.[side] || meta.phase === "playing" || meta.phase === "ended", forfeitInMs: meta.phase === "playing" && since !== null ? Math.max(0, since + this.forfeitAfterMs - now) : null }];
+      return [{ side, name: player.name, connected: connected.has(side), ready: !!meta.teams?.[side] || meta.phase === "playing" || meta.phase === "ended", forfeitInMs: meta.phase === "playing" && since !== null ? Math.max(0, since + this.forfeitAfterMs - now) : null, turnInMs: this.turnLeft(side), rematch: !!meta.rematch?.[side] }];
     });
+  }
+
+  /** Milliseconds this player has left to choose, or null if they owe no choice. */
+  private turnLeft(side: SideId): number | null {
+    const start = this.meta?.turnStart?.[side];
+    if (this.meta?.phase !== "playing" || !this.host?.unanswered(side) || start === null || start === undefined) return null;
+    return Math.max(0, start + this.turnMs - this.io.now());
   }
 
   private broadcastStatus() {
@@ -372,7 +445,13 @@ export class RoomLogic {
     const meta = this.meta;
     if (!meta) return this.io.setAlarm(null);
     const times = [meta.lastActivity + this.ttlMs];
-    if (meta.phase === "playing") for (const side of ["p1", "p2"] as const) if (meta.disconnectedAt[side] !== null) times.push(meta.disconnectedAt[side]! + this.forfeitAfterMs);
+    if (meta.phase === "playing") {
+      for (const side of SIDES) if (meta.disconnectedAt[side] !== null) times.push(meta.disconnectedAt[side]! + this.forfeitAfterMs);
+      for (const side of SIDES) {
+        const start = meta.turnStart?.[side];
+        if (this.host?.unanswered(side) && start !== null && start !== undefined) times.push(start + this.turnMs);
+      }
+    }
     await this.io.setAlarm(Math.min(...times));
   }
 
@@ -405,6 +484,27 @@ export class RoomLogic {
         this.host.forfeit(away[0]);
         await this.host.settle();
         await this.touch();
+        return;
+      }
+      // Out of time: a random legal choice is made for whoever has not chosen (a notice goes to both players), and the battle carries on.
+      const late = SIDES.filter((side) => {
+        const start = meta.turnStart?.[side];
+        return this.host!.unanswered(side) && start !== null && start !== undefined && now - start >= this.turnMs;
+      });
+      if (late.length) {
+        for (const side of late) {
+          const pending = this.host.unanswered(side)!;
+          const name = meta.players[side]?.name ?? side;
+          const notice = `|-message|${name} ran out of time, so a random choice was made for them.`;
+          this.host.note(notice);
+          for (const [id] of this.seats) this.io.send(id, { type: "battle", lines: [notice], request: null, error: null });
+          for (const [id] of this.seats) this.io.send(id, { type: "timeout", side, name });
+          meta.turnStart = { p1: meta.turnStart?.p1 ?? null, p2: meta.turnStart?.p2 ?? null, [side]: now }; // if the simulator refuses the pick, try again a turn-length later
+          this.host.choose(side, randomLegalChoice(pending.raw), pending.rqid);
+        }
+        await this.host.settle();
+        await this.touch();
+        this.broadcastStatus();
         return;
       }
     }

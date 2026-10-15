@@ -8,6 +8,8 @@ import { matchesQuery, parseQuery, searchKey } from "@/lib/pokedex-search";
 import type { PokemonType } from "@/lib/pokemon-types";
 import { FILTER_TYPES, TYPE_COLORS } from "@/lib/type-colors";
 import { CoverageSections } from "../../pokedex/team-coverage";
+import { dexTypeMath } from "@/lib/battle/dex-facts";
+import type { TypeChart } from "@/lib/team";
 import { useTeamTools } from "../use-team-tools";
 import { MemberEditor } from "./member-editor";
 
@@ -49,6 +51,13 @@ export function TeamEditor({
     () => sets.flatMap((set, i) => (facts[i] ? [{ name: set.species, types: facts[i]!.types.map((t) => t.toLowerCase() as PokemonType) }] : [])),
     [sets, facts],
   );
+
+  // The selected format's own type chart, from the simulator's data for its generation (Gen 1 has no Dark, Steel or Fairy; Gens 2-5 have Steel resist Ghost and Dark; Gen 1 Ghost can't hit Psychic).
+  const chart = useMemo<TypeChart | undefined>(() => {
+    if (!tools) return undefined;
+    const math = dexTypeMath(tools.dex);
+    return (attack, defenders) => math.multiplier(attack, defenders);
+  }, [tools]);
 
   const update = (patch: Partial<SavedTeam>) => setDraft((d) => ({ ...d, ...patch }));
   const setSet = (index: number, next: PokemonSet) => update({ sets: sets.map((s, i) => (i === index ? next : s)) });
@@ -224,8 +233,8 @@ export function TeamEditor({
             )}
           </section>
           <div className="space-y-4 border-t border-white/10 pt-4">
-            <p className="text-xs text-zinc-500">Type coverage uses the Pokédex&apos;s modern type chart. Generations 1 to 5 differ in a few matchups (such as Steel resisting Ghost and Dark).</p>
-            {coverage.length === 0 ? <p className="text-sm text-white/60">Add a Pokémon to see what the team is weak to and resists.</p> : <CoverageSections members={coverage} />}
+            <p className="text-xs text-zinc-500">Type coverage uses the Generation {format.gen} type chart{format.gen <= 5 ? " (older generations differ from today's in a few matchups)" : ""}.</p>
+            {coverage.length === 0 ? <p className="text-sm text-white/60">Add a Pokémon to see what the team is weak to and resists.</p> : <CoverageSections members={coverage} chart={chart} />}
           </div>
           <div className="space-y-2 border-t border-white/10 pt-4">
             <button type="button" disabled={!sets.length || !check} onClick={() => setExportOpen((o) => !o)} aria-expanded={exportOpen} className="text-sm font-semibold text-teal-200 underline-offset-4 hover:underline disabled:opacity-40">

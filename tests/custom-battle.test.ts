@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Dex } from "@pkmn/sim";
 import { startLocalBattle, type BattleMessage } from "../lib/battle/engine";
 import { FORMATS, TEAM_FORMATS } from "../lib/battle/formats";
 import { applyLine, createView, syncRequest } from "../lib/battle/protocol";
 import { cpuTeamFor, recommendedFor } from "../lib/battle/recommended";
 
+let leadPick = 1;
 function play(formatKey: string, player: ReturnType<typeof recommendedFor>[number], cpu: typeof player, difficulty: "easy" | "normal" = "normal") {
   const format = FORMATS.find((f) => f.key === formatKey)!;
   const view = createView();
@@ -20,7 +22,9 @@ function play(formatKey: string, player: ReturnType<typeof recommendedFor>[numbe
         const request = message.request;
         if (!request || request.wait) return;
         syncRequest(view, "p1", request, battle.lookups);
-        if (request.forceSwitch || !request.active) {
+        if (request.teamPreview) {
+          battle.choose(`team ${leadPick}`);
+        } else if (request.forceSwitch || !request.active) {
           const slot = request.team.findIndex((p) => !p.active && (request.reviving ? p.fainted : !p.fainted));
           battle.choose(slot >= 0 ? `switch ${slot + 1}` : "default");
         } else {
@@ -75,5 +79,46 @@ test("the team formats are what the lobby promises: OU for each of the nine gene
   assert.ok(TEAM_FORMATS.every((f) => f.custom && f.generator === ""));
   assert.ok(FORMATS.filter((f) => !f.custom).every((f) => f.generator !== ""));
   // Gens 1-4 have no Team Preview rule to remove; later ones have it removed (the first Pokemon leads).
-  for (const f of TEAM_FORMATS) assert.equal(f.formatId.includes("!Team Preview"), f.gen >= 5, f.key);
+  // They keep the simulator's own Team Preview rule (nothing removes it): Gen 5 and later have it, Gens 1-4 never did.
+  for (const f of TEAM_FORMATS) {
+    assert.ok(!f.formatId.includes("Team Preview"), f.key);
+    const rules = Dex.formats.getRuleTable(Dex.formats.get(f.formatId));
+    assert.equal(rules.has("teampreview"), f.gen >= 5, f.key);
+  }
+});
+
+test("Team Preview in CPU battles: the player's chosen lead goes out first, and the CPU's lead comes from its own team", async () => {
+  const mine = recommendedFor("team-gen8ou")[0];
+  const theirs = recommendedFor("team-gen8ou")[1];
+  leadPick = 4;
+  try {
+    const { view } = await play("team-gen8ou", mine, theirs);
+    const first = view.log.find((e) => e.text.startsWith("Go!"));
+    assert.ok(first?.text.includes(mine.sets[3].species), `expected the fourth Pokemon to lead, got ${first?.text}`);
+    assert.equal(view.sides.p2.preview.length, 6, "the CPU's six were shown");
+    assert.equal(view.sides.p1.preview.length, 6);
+    // (Team Preview hides some formes: Urshifu-Rapid-Strike shows as Urshifu.)
+    assert.deepEqual(view.sides.p2.preview.map((p) => p.species.split("-")[0]), theirs.sets.map((s) => s.species.split("-")[0]));
+  } finally {
+    leadPick = 1;
+  }
+});
+
+test("a Normal CPU leads with the Pokemon that does best against the team on show; Easy picks any", async () => {
+  const { CpuPlayer } = await import("../lib/battle/cpu-player");
+  const { BattleStreams, Dex } = await import("@pkmn/sim");
+  const { parseRequest } = await import("../lib/battle/protocol");
+  const dex = Dex.forFormat("gen8ou");
+  const stream = BattleStreams.getPlayerStreams(new BattleStreams.BattleStream()).p2;
+  const mon = (species: string, moves: string[]) => ({ ident: `p2: ${species}`, details: `${species}, L100`, condition: "100/100", active: false, moves, item: "", baseAbility: "" });
+  const request = parseRequest({ teamPreview: true, side: { id: "p2", pokemon: [mon("Golem", ["earthquake"]), mon("Pikachu", ["thunderbolt"]), mon("Machamp", ["closecombat"])] } });
+  const normal = new CpuPlayer(stream, "p2", dex, "normal", 1) as unknown as { view: { sides: Record<string, { preview: unknown[] }> }; chooseLead(r: typeof request): string };
+  const water = (species: string) => ({ species, spriteId: 1, types: ["water"], level: 100, gender: "N" });
+  normal.view.sides.p1.preview = ["Blastoise", "Vaporeon", "Gyarados"].map(water);
+  assert.equal(normal.chooseLead(request), "team 2", "Pikachu: electric hits water, and nothing on the other side hits it hard");
+  const easy = new CpuPlayer(stream, "p2", dex, "easy", 1) as unknown as { chooseLead(r: typeof request): string };
+  const picks = new Set(Array.from({ length: 30 }, () => easy.chooseLead(request)));
+  assert.ok(picks.size >= 2 && [...picks].every((p) => /^team [1-3]$/.test(p)));
+  normal.view.sides.p1.preview = [];
+  assert.match(normal.chooseLead(request), /^team [1-3]$/, "with nothing on show it still chooses");
 });

@@ -197,6 +197,18 @@ export class BattleHost {
     return null;
   }
 
+  /** A line shown to both players that is not part of the simulator's log (a timeout notice): kept in their histories for a refresh. */
+  note(line: string) {
+    this.history.p1.push(line);
+    this.history.p2.push(line);
+  }
+
+  /** The question this side still owes an answer to (a real one, not "wait"), or null. */
+  unanswered(side: SideId): PendingRequest | null {
+    const pending = this.requests[side];
+    return !this.ended && pending && !pending.wait && this.answered[side] !== pending.rqid ? pending : null;
+  }
+
   /** Which request each side has already answered, for saving (a restart must not let a player answer a turn twice). */
   answeredSnapshot(): { p1: number | null; p2: number | null } {
     return { ...this.answered };

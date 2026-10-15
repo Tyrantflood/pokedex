@@ -62,17 +62,23 @@ const capitalise = (type: string) => type.charAt(0).toUpperCase() + type.slice(1
 
 /**
  * Type matchups from the simulator's own data for this dex's generation (so Gen 1's Ghost-does-nothing-to-Psychic and the Gen 2-5
- * Steel resisting Ghost and Dark are right). A type the generation doesn't have (Fairy in Gen 5, Tera's Stellar) is neutral.
+ * Steel resisting Ghost and Dark are right). A type the generation doesn't have is neutral: the simulator keeps its data for every type in every
+ * generation but marks the ones that don't exist yet as "Future" (Fairy before Gen 6, Dark and Steel in Gen 1, Stellar before Gen 9).
  */
+const existsIn = (dex: ModdedDex, type: string) => {
+  const t = dex.types.get(type);
+  return t.exists && !t.isNonstandard;
+};
+
 export function dexTypeMath(dex: ModdedDex): TypeMath {
   return {
     multiplier(attack, defenders) {
       const a = capitalise(attack);
-      if (!dex.types.get(a).exists) return 1;
+      if (!existsIn(dex, a)) return 1;
       let result = 1;
       for (const d of defenders) {
         const target = capitalise(d);
-        if (!dex.types.get(target).exists) continue;
+        if (!existsIn(dex, target)) continue;
         if (!dex.getImmunity(a, target)) return 0;
         result *= 2 ** dex.getEffectiveness(a, target);
       }
