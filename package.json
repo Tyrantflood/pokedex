@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prepare": "node scripts/install-hooks.mjs",
     "prebuild": "node scripts/build-location-names.mjs",
     "build": "next build",
     "start": "next start",

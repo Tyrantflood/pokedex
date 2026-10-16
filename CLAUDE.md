@@ -12,6 +12,8 @@ promises.
 
 Commit and push straight to the default branch unless the owner asks for a branch. In this repo that branch is named `master` (there is no `main`).
 
+**Never push with a failing check.** A git `pre-push` hook (`.githooks/pre-push`, enabled by `npm install` through the `prepare` script, which runs `scripts/install-hooks.mjs` to set `core.hooksPath`; run `node scripts/install-hooks.mjs` by hand in a fresh clone that skipped install) runs `npx tsc --noEmit`, `npx eslint app lib scripts tests tests-slow --max-warnings=0` and `npm test` (about a minute) and refuses the push if any fails. Fix the failure; do not use `git push --no-verify`, and do not commit-and-push in one chain without reading the check results first (a commit once went up with a failing test that way). The hook file is kept LF by `.gitattributes`, since a CRLF `sh` script fails. Checked by breaking a test on purpose: the push was refused.
+
 ## Commands
 
 - `npm run dev` / `npm run build` / `npm run start` (`npx next start -H 0.0.0.0 -p 3000` to reach it from a phone).
