@@ -90,21 +90,36 @@ for (const format of FORMATS.filter((f) => f.custom)) {
     }
     seen.add(key);
     const style = describeTeam(dex, sets);
-    // Posts without a title ("Untitled 3", "Guest 2") get a plain description of the team instead; the author stays as published.
-    const untitled = !title || /^(untitled|guest)/i.test(title);
-    const lead = sets.slice(0, 3).map((s) => s.species).join(", ");
-    const name = untitled ? `${lead}: ${style.tag.toLowerCase()}` : title;
-    candidates.push({ name, author: author || "unknown", sets, ...style });
+    // The post's own title is kept for the credit line (not when it was only "Untitled 3" or "Guest 2"); the display name is made from the team's core.
+    const untitled = !title || /^(untitled|guest) ?\d*$/i.test(title);
+    candidates.push({ title: untitled ? null : title, author: author || "unknown", sets, ...style });
   }
+
+  // Two teams can come out with the same display name. The later one is told apart by its next most imposing Pokémon ("Mega Latias Stall + Gliscor"),
+  // and only if that is taken too by a number ("... II").
+  const used = new Map();
+  const numbered = (name, core) => {
+    if (!used.has(name)) return used.set(name, 1), name;
+    for (const extra of core) {
+      if (name.includes(extra)) continue;
+      const alt = `${name} + ${extra}`;
+      if (!used.has(alt)) return used.set(alt, 1), alt;
+    }
+    const n = used.get(name) + 1;
+    used.set(name, n);
+    return `${name} ${["", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"][n - 1] ?? n}`;
+  };
 
   // Best synergy first; ties keep the order the teams were published in.
   const chosen = candidates
     .map((c, index) => ({ c, index }))
     .sort((a, b) => b.c.score - a.c.score || a.index - b.index)
     .slice(0, MAX_PER_FORMAT)
-    .map(({ c }, i) => ({
-      id: `${format.key}-${i + 1}-${slug(c.name)}`.slice(0, 60),
-      name: c.name,
+    .map(({ c }, i) => ({ c, display: numbered(c.name, c.core), i }))
+    .map(({ c, display, i }) => ({
+      id: `${format.key}-${i + 1}-${slug(display)}`.slice(0, 60),
+      name: display,
+      title: c.title,
       author: c.author,
       tag: c.tag,
       why: c.why,

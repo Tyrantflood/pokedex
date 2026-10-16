@@ -71,7 +71,7 @@ export function RecommendedBrowser({ onCopy, onBack }: { onCopy: (team: Recommen
                 </div>
                 <p className="mt-2 flex-1 text-sm text-zinc-300">{team.why}</p>
                 <p className="mt-2 text-[11px] text-zinc-500">
-                  Team by {team.author} · <a href={CREDIT.url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">Smogon</a> sample teams
+                  Team by {team.author} · <a href={CREDIT.url} target="_blank" rel="noreferrer" className="underline-offset-2 hover:underline">Smogon</a> sample teams{team.title ? ` · posted as “${team.title}”` : ""}
                 </p>
                 {open === team.id && (
                   <ul className="mt-2 space-y-1 rounded-xl bg-black/30 p-2.5 text-xs text-zinc-300">

@@ -141,3 +141,40 @@ test("playstyle: a rain team is Weather, a team of walls is Stall, with sentence
   ]);
   assert.equal(rush.tag, "Offense");
 });
+
+test("recommended teams have short clean display names made from their core, unique in a format, with the original post title kept for the credit", () => {
+  let titled = 0;
+  for (const format of TEAM_FORMATS) {
+    const teams = recommendedFor(format.key);
+    assert.equal(new Set(teams.map((t) => t.name)).size, teams.length, `${format.key}: two teams share a name`);
+    for (const t of teams) {
+      assert.ok(t.name.length >= 4 && t.name.length <= 45, `${t.name} (${t.name.length})`);
+      assert.ok(!/^(untitled|guest) ?\d*$/i.test(t.title ?? ""), "a placeholder title is not kept");
+      assert.ok(t.title === null || (typeof t.title === "string" && t.title.length > 0));
+      assert.ok(t.sets.some((s) => t.name.includes(s.species.split("-")[0]) || t.name.includes("Mega") || t.name.includes("Volt-Turn")), `${t.name} names none of its Pokémon`);
+      if (t.title) {
+        titled++;
+        assert.notEqual(t.name, t.title, "the display name is not just the post title");
+      }
+    }
+  }
+  assert.ok(titled > 80, `only ${titled} teams kept their post title`);
+  // The examples of the old raw titles became short names.
+  const names = recommendedFor("team-gen5ou").map((t) => t.name);
+  assert.ok(names.includes("Politoed Rain"), names.join(" | "));
+  assert.ok(!names.some((n) => /Week 1|ThundyT/.test(n)));
+  assert.equal(recommendedFor("team-gen5ou").find((t) => t.name === "Politoed Rain")?.title, "Week 1 U-Turn ThundyT CB Mamo Rain");
+});
+
+test("display names: weather sets the name, then Trick Room, a Mega, Volt-Turn, then the team's most imposing Pokémon", () => {
+  const dex = Dex.forFormat("gen7ou");
+  const mon = (species: string, ability: string, moves: string[], item = "Leftovers") => ({ name: species, species, item, ability, moves, nature: "Serious", gender: "", evs: {}, ivs: {}, level: 100 }) as never;
+  const rain = describeTeam(dex, [mon("Politoed", "Drizzle", ["Scald", "Encore", "Ice Beam", "Toxic"]), mon("Ludicolo", "Swift Swim", ["Giga Drain", "Hydro Pump", "Ice Beam", "Rain Dance"]), mon("Keldeo", "Justified", ["Hydro Pump", "Secret Sword", "Icy Wind", "Protect"])]);
+  assert.equal(rain.name, "Politoed Rain");
+  const mega = describeTeam(dex, [mon("Charizard", "Blaze", ["Flare Blitz", "Dragon Dance", "Roost", "Earthquake"], "Charizardite X"), mon("Ferrothorn", "Iron Barbs", ["Stealth Rock", "Leech Seed", "Protect", "Gyro Ball"]), mon("Gliscor", "Poison Heal", ["Earthquake", "Protect", "Toxic", "Swords Dance"])]);
+  assert.match(mega.name, /^Mega Charizard X /);
+  const volt = describeTeam(dex, [mon("Rotom-Wash", "Levitate", ["Volt Switch", "Hydro Pump", "Will-O-Wisp", "Pain Split"]), mon("Landorus-Therian", "Intimidate", ["U-turn", "Earthquake", "Stealth Rock", "Knock Off"]), mon("Heatran", "Flash Fire", ["Lava Plume", "Toxic", "Stealth Rock", "Taunt"])]);
+  assert.equal(volt.name, "Volt-Turn Rotom-Wash");
+  assert.equal(volt.core.length, 3);
+  assert.ok(volt.core[0] === "Heatran" || volt.core[0] === "Landorus-Therian" || volt.core[0] === "Rotom-Wash");
+});

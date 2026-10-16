@@ -126,7 +126,7 @@ export function TeamPicker({
                       <TeamIcons icons={team.icons} size={24} />
                     </span>
                     <span className="mt-1 block text-xs text-zinc-400">{team.why}</span>
-                    <span className="mt-1 block text-[11px] text-zinc-500">By {team.author} · from Smogon&apos;s sample teams</span>
+                    <span className="mt-1 block text-[11px] text-zinc-500">By {team.author} · from Smogon&apos;s sample teams{team.title ? ` · posted as “${team.title}”` : ""}</span>
                   </button>
                   {onCopy && (
                     <div className="border-t border-white/5 px-2.5 py-1.5 text-right">

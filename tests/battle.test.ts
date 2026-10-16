@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Dex } from "@pkmn/sim";
 import { startLocalBattle, type BattleMessage } from "../lib/battle/engine";
-import { FORMATS, RANDOM_FORMATS } from "../lib/battle/formats";
+import { FORMATS, previewNote, RANDOM_FORMATS } from "../lib/battle/formats";
 import { spriteIdFor } from "../lib/battle/ids";
 import { makeLookups } from "../lib/battle/dex-facts";
 import { applyLine, createView, syncRequest, type BattleView, parseCondition, parseDetails, parseIdent, parseRequest } from "../lib/battle/protocol";
@@ -194,4 +194,14 @@ test("Revival Blessing asks for a fainted Pokémon: the request says so, and a r
   const reviveSlot = request.team.findIndex((p) => !p.active && (request.reviving ? p.fainted : !p.fainted));
   assert.equal(reviveSlot, 1, "the fainted Gengar, not the healthy Snorlax");
   assert.equal(parseRequest({ forceSwitch: [true], side: { id: "p1", pokemon: [{ ident: "p1: A", details: "Pawmot, L80", condition: "0 fnt", active: true }, { ident: "p1: B", details: "Gengar, L80", condition: "10/10", active: false }] } }).reviving, false, "an ordinary forced switch is not a revive");
+});
+
+test("the lobby's note about leads follows the format: Team Preview from Gen 5, none in Gens 1-4, nothing for random formats", () => {
+  for (const f of FORMATS) {
+    const note = previewNote(f);
+    if (!f.custom) assert.equal(note, "", f.key);
+    else if (f.gen >= 5) assert.match(note, /Team Preview.*choose a lead/, f.key);
+    else assert.match(note, new RegExp(`Generation ${f.gen} has no team preview`), f.key);
+    assert.ok(!/no team preview.*first Pokémon leads/i.test(note) || f.gen < 5, `${f.key} must not say there is no preview`);
+  }
 });

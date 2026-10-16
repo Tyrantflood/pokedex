@@ -83,6 +83,12 @@ export const FORMATS: BattleFormat[] = [
   ...teamFormats(),
 ];
 
+/** What the lobby and the builder say about leads: Team Preview from Gen 5 (the simulator's rule), none before. */
+export function previewNote(format: Pick<BattleFormat, "gen" | "custom">): string {
+  if (!format.custom) return "";
+  return format.gen >= 5 ? "Team Preview: both players see each other's six Pokémon and choose a lead." : `Generation ${format.gen} has no team preview: your first Pokémon leads.`;
+}
+
 export const RANDOM_FORMATS = FORMATS.filter((f) => !f.custom);
 export const TEAM_FORMATS = FORMATS.filter((f) => f.custom);
 

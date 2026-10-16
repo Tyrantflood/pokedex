@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { PokemonSet } from "@pkmn/sets";
-import { TEAM_FORMATS, formatByKey } from "@/lib/battle/formats";
+import { TEAM_FORMATS, formatByKey, previewNote } from "@/lib/battle/formats";
 import { MAX_TEAM_NAME, TEAM_SIZE, type SavedTeam } from "@/lib/battle/my-teams";
 import { matchesQuery, parseQuery, searchKey } from "@/lib/pokedex-search";
 import type { PokemonType } from "@/lib/pokemon-types";
@@ -130,7 +130,7 @@ export function TeamEditor({
           </button>
         </div>
       </div>
-      <p className="-mt-2 text-xs text-zinc-500">{format.note} The first Pokémon leads (no team preview).</p>
+      <p className="-mt-2 text-xs text-zinc-500">{format.note} {previewNote(format)}</p>
 
       {error && (
         <p role="alert" className="rounded-xl border border-red-400/40 bg-red-950/30 p-3 text-sm text-red-100">

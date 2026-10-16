@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { formatByKey, RANDOM_FORMATS, TEAM_FORMATS } from "@/lib/battle/formats";
+import { formatByKey, previewNote, RANDOM_FORMATS, TEAM_FORMATS } from "@/lib/battle/formats";
 import type { Difficulty } from "@/lib/battle/cpu-player";
 import type { TeamStore } from "@/lib/battle/my-teams";
 import type { RecommendedTeam } from "@/lib/battle/recommended";
@@ -102,7 +102,7 @@ export function Lobby({
           ))}
         </div>
         <p className="mt-2 text-xs text-zinc-400">{format.note}</p>
-        {format.custom && <p className="mt-1 text-xs text-zinc-500">Teams are checked against the format&apos;s rules. There is no team preview: your first Pokémon leads.</p>}
+        {format.custom && <p className="mt-1 text-xs text-zinc-500">Teams are checked against the format&apos;s rules. {previewNote(format)}</p>}
       </fieldset>
 
       {format.custom && (

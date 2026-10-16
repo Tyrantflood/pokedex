@@ -13,6 +13,10 @@ export type Playstyle = "Offense" | "Bulky offense" | "Balance" | "Stall" | "Wea
 
 export interface TeamStyle {
   tag: Playstyle;
+  /** A short display name from the team's core ("Politoed Rain", "Mega Charizard X Offense", "Gliscor Alomomola Balance"). Not unique: the caller numbers repeats. */
+  name: string;
+  /** The team's Pokémon, most imposing first: what a repeated display name can be told apart by. */
+  core: string[];
   /** One sentence, built from facts about the team. */
   why: string;
   /** Higher is better; only meaningful for comparing teams of the same format. */
@@ -43,10 +47,29 @@ interface MemberFacts {
   name: string;
   types: string[];
   baseSpe: number;
+  /** Base stat total: the more imposing Pokémon tend to be the team's identity. */
+  bst: number;
+  /** The Mega forme this member's stone gives it ("Charizard-Mega-X"), if it holds one. */
+  mega: string | null;
   moves: ReturnType<ModdedDex["moves"]["get"]>[];
   ability: string;
   item: string;
 }
+
+/** The Mega forme a stone gives (the simulator stores it as { Base: "Base-Mega" }, older data as a string). */
+function megaFormeOf(stone: unknown): string | null {
+  if (typeof stone === "string") return stone;
+  if (stone && typeof stone === "object") return Object.values(stone as Record<string, string>)[0] ?? null;
+  return null;
+}
+
+/** "Charizard-Mega-X" -> "Mega Charizard X". */
+export function megaDisplay(forme: string): string {
+  const match = /^(.*?)-Mega(?:-(.+))?$/.exec(forme);
+  return match ? `Mega ${match[1]}${match[2] ? ` ${match[2]}` : ""}` : forme;
+}
+
+const WEATHER_NOUN: Record<string, string> = { sun: "Sun", "harsh sun": "Sun", rain: "Rain", "heavy rain": "Rain", sandstorm: "Sand", snow: "Snow", hail: "Hail", "strong winds": "Winds" };
 
 function factsOf(dex: ModdedDex, sets: PokemonSet[]): MemberFacts[] {
   return sets.map((set) => {
@@ -55,6 +78,8 @@ function factsOf(dex: ModdedDex, sets: PokemonSet[]): MemberFacts[] {
       name: species.name,
       types: species.types,
       baseSpe: species.baseStats.spe,
+      bst: species.bst,
+      mega: megaFormeOf(dex.items.get(set.item).megaStone),
       moves: set.moves.map((m) => dex.moves.get(m)),
       ability: dex.abilities.get(set.ability).id,
       item: dex.items.get(set.item).id,
@@ -186,5 +211,20 @@ export function describeTeam(dex: ModdedDex, sets: PokemonSet[]): TeamStyle {
   if (recoverers.length) score += 2;
   score -= open.length * 1.5;
 
-  return { tag, why, score, worstShared };
+  // The display name, from the team's core: its weather, its Trick Room, its Mega, its pivoting, else its two most imposing Pokémon.
+  const tagWord: Record<Playstyle, string> = { Offense: "Offense", "Bulky offense": "Bulky Offense", Balance: "Balance", Stall: "Stall", Weather: "Weather", "Trick Room": "Trick Room" };
+  const byPresence = [...team].sort((a, b) => b.bst + (b.moves.some(isSetup) ? 40 : 0) - (a.bst + (a.moves.some(isSetup) ? 40 : 0)));
+  const mega = team.find((m) => m.mega);
+  const voltTurn = team.some((m) => has(m, new Set(["voltswitch"]))) && team.some((m) => has(m, new Set(["uturn", "flipturn"])));
+  let name: string;
+  if (tag === "Weather" && setter) name = `${setter.name} ${WEATHER_NOUN[weatherName] ?? "Weather"}`;
+  else if (tag === "Trick Room" && trickRoomer) name = `${trickRoomer.name} Trick Room`;
+  else if (mega) name = `${megaDisplay(mega.mega!)} ${tagWord[tag]}`;
+  else if (voltTurn) name = `Volt-Turn ${(team.find((m) => has(m, new Set(["voltswitch"]))) ?? byPresence[0]).name}`;
+  else if (tag === "Offense") name = `${(setupUsers.length ? [...setupUsers].sort((a, b) => b.bst - a.bst)[0] : byPresence[0]).name} Offense`;
+  else if (tag === "Bulky offense") name = `Bulky ${(setupUsers.length ? [...setupUsers].sort((a, b) => b.bst - a.bst)[0] : byPresence[0]).name}`;
+  else if (tag === "Stall") name = `${[...recoverers].sort((a, b) => b.bst - a.bst).slice(0, 2).map((m) => m.name).join(" ") || byPresence[0].name} Stall`;
+  else name = `${byPresence.slice(0, 2).map((m) => m.name).join(" ")} Balance`;
+
+  return { tag, name, core: byPresence.map((m) => m.name), why, score, worstShared };
 }

@@ -8,7 +8,10 @@ import { normalizeIcons, normalizeSets, type SavedTeam } from "./my-teams";
 
 export interface RecommendedTeam {
   id: string;
+  /** A short display name made from the team's core (see team-style.ts). */
   name: string;
+  /** The title of the post on Smogon as its author wrote it (null when the post had none): kept for the credit line. */
+  title: string | null;
   /** The poster on Smogon, as published ("unknown" when the sample carried no name). */
   author: string;
   /** Offense, Bulky offense, Balance, Stall, Weather or Trick Room: worked out from the team's own moves, abilities and types. */
@@ -42,7 +45,7 @@ type Raw = typeof data.formats;
 export function recommendedFor(formatKey: string): RecommendedTeam[] {
   const entry = (data.formats as Raw & Record<string, Raw[keyof Raw] | undefined>)[formatKey];
   if (!entry) return [];
-  return entry.teams.map((t) => ({ id: t.id, name: t.name, author: t.author, tag: t.tag, why: t.why, formatKey, icons: normalizeIcons(t.icons), sets: normalizeSets(t.sets) }));
+  return entry.teams.map((t) => ({ id: t.id, name: t.name, title: (t as { title?: string | null }).title ?? null, author: t.author, tag: t.tag, why: t.why, formatKey, icons: normalizeIcons(t.icons), sets: normalizeSets(t.sets) }));
 }
 
 export function recommendedFormat(formatKey: string): RecommendedFormat | null {
