@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ScannerLink } from "../scanner-link";
-import { leavingCostsForfeit } from "@/lib/battle/active-room";
+import { leaveWarning, leavingCostsForfeit } from "@/lib/battle/active-room";
 import { formatByKey } from "@/lib/battle/formats";
 import { newTeamId, upsertTeam } from "@/lib/battle/my-teams";
 import type { RecommendedTeam } from "@/lib/battle/recommended";
@@ -14,6 +14,7 @@ import { RoomScreen } from "./room-screen";
 import { createKey, parseSettings, SETTINGS_KEY, type BattleSettings } from "./settings";
 import { resolvePick } from "./team-source";
 import { useActiveRoom } from "./use-active-room";
+import { useBackGuard } from "./use-back-guard";
 import { useMyTeams } from "./use-my-teams";
 import { useStored } from "./use-stored";
 import type { BattleConfig } from "./use-battle-session";
@@ -30,6 +31,9 @@ export function BattleApp() {
   const { active, clear: clearActive } = useActiveRoom();
   // A battle under way in this room: walking away from it starts the forfeit clock, so Back to Pokédex asks first.
   const liveHere = roomParam !== null && active?.code === roomParam && leavingCostsForfeit(active);
+  // The browser's Back button and Android's back gesture ask the same question as the Back to Pokédex link.
+  const leaveQuestion = leaveWarning(FORFEIT_AFTER_MS / 1000);
+  useBackGuard(roomParam !== null && isRoomCode(roomParam) ? roomParam : null, liveHere, () => window.confirm(leaveQuestion));
   const leaveRoom = () => {
     clearActive(); // leaving on purpose (cancelling an invite, backing out of team choice, after the result) is not something to come back to
     router.push("/battle");
@@ -80,11 +84,7 @@ export function BattleApp() {
         <ScannerLink
           href="/"
           onClick={(e) => {
-            if (liveHere && !window.confirm(`Your battle is still going. If you leave and are not back within ${FORFEIT_AFTER_MS / 1000} seconds, you forfeit.
-
-You can come back with the Return to battle button on the Pokédex.
-
-Leave the battle anyway?`)) e.preventDefault();
+            if (liveHere && !window.confirm(leaveQuestion)) e.preventDefault();
           }}
         >
           Back to Pokédex

@@ -37,3 +37,7 @@ export const activeRoomPath = (room: Pick<ActiveRoom, "code">): string => `/batt
 
 /** What leaving costs: only a battle that is under way has a clock. */
 export const leavingCostsForfeit = (room: Pick<ActiveRoom, "phase">): boolean => room.phase === "playing";
+
+/** What the player is asked before leaving a live battle, by the Back to Pokédex link and by the browser's Back button alike. */
+export const leaveWarning = (forfeitSeconds: number): string =>
+  `Your battle is still going. If you leave and are not back within ${forfeitSeconds} seconds, you forfeit.\n\nYou can come back with the Return to battle button on the Pokédex.\n\nLeave the battle anyway?`;

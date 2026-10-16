@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { activeRoomPath, leavingCostsForfeit, parseActiveRoom, serializeActiveRoom } from "../lib/battle/active-room";
+import { activeRoomPath, leaveWarning, leavingCostsForfeit, parseActiveRoom, serializeActiveRoom } from "../lib/battle/active-room";
 import { ROOM_TTL_MS } from "../lib/battle/room-protocol";
 
 const now = 1_000_000_000;
@@ -23,4 +23,10 @@ test("only a battle under way costs a forfeit to leave", () => {
   assert.equal(leavingCostsForfeit({ phase: "playing" }), true);
   assert.equal(leavingCostsForfeit({ phase: "teams" }), false);
   assert.equal(leavingCostsForfeit({ phase: "waiting" }), false);
+});
+
+test("the question asked before leaving a live battle names the forfeit time and how to get back", () => {
+  const text = leaveWarning(60);
+  assert.match(text, /not back within 60 seconds, you forfeit/);
+  assert.match(text, /Return to battle/);
 });
