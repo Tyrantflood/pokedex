@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Suspense } from "react";
 import { NightMode } from "./night-mode";
+import { ReturnToBattle } from "./return-to-battle";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -62,6 +64,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">{children}
         <div className="night-veil" aria-hidden />
         <NightMode />
+        {/* The way back into a friend battle this browser is in (it reads the URL, hence the boundary). */}
+        <Suspense>
+          <ReturnToBattle />
+        </Suspense>
       </body>
     </html>
   );

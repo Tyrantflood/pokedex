@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatByKey } from "@/lib/battle/formats";
 import { isLastStand } from "@/lib/battle/music-data";
 import { ActionPanel } from "./action-panel";
@@ -10,6 +10,7 @@ import { AwayBanner, ConnectionBanner, RoomError, TurnTimer, WaitingPanel } from
 import { RoomTeams } from "./room-teams";
 import { useBattleMusic } from "./use-battle-music";
 import { useBattleSession, type SessionSpec } from "./use-battle-session";
+import { useActiveRoom } from "./use-active-room";
 import { useStored } from "./use-stored";
 
 const MUTED_KEY = "battle:muted";
@@ -29,6 +30,25 @@ export function BattleSession({ spec, onRematch, onLeave }: { spec: SessionSpec;
   const { view, room } = state;
   const over = state.status === "over";
   const online = spec.kind === "online";
+
+  // A friend battle is remembered in this browser while it is not over, so that leaving the page by mistake can be undone (see ReturnToBattle).
+  const { save: saveActive, clear: clearActive } = useActiveRoom();
+  const roomCode = room?.code;
+  const roomFormat = room?.config.formatKey;
+  const roomPhase = room?.phase;
+  const finished = over || roomPhase === "ended" || state.status === "error";
+  useEffect(() => {
+    if (!online || !roomCode || !roomFormat || !roomPhase) return;
+    if (finished) return clearActive();
+    const remember = () => saveActive({ code: roomCode, formatKey: roomFormat, phase: roomPhase, savedAt: Date.now() });
+    remember();
+    const timer = setInterval(remember, 5 * 60_000); // keeps the saved time fresh through a long battle
+    return () => clearInterval(timer);
+  }, [online, roomCode, roomFormat, roomPhase, finished, saveActive, clearActive]);
+  // A room that cannot be joined (full, gone, a bad code) is not one to come back to.
+  useEffect(() => {
+    if (online && state.status === "error") clearActive();
+  }, [online, state.status, clearActive]);
 
   const toggleMute = () => setMutedRaw(muted ? "0" : "1");
   const playerName = spec.kind === "cpu" ? spec.config.playerName : (room?.you ?? spec.room.name);

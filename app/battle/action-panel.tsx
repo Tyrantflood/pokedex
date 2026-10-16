@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { battleSpriteUrls } from "@/lib/battle/ids";
 import { PLACEHOLDER_URL } from "@/lib/battle/sprite-chain";
+import { moveChoice, SPECIAL_LABEL, type Special } from "@/lib/battle/move-choice";
 import type { ParsedRequest, RequestMon, SideView } from "@/lib/battle/protocol";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import type { PokemonType } from "@/lib/pokemon-types";
@@ -13,9 +14,6 @@ import { HpBar, StatusChip, TypeChip } from "./ui";
 /** The simulator's refusals start with a tag like "[Invalid choice]"; the player only needs the rest. */
 const REFUSAL_PREFIX = /^\[.*?\]\s*/;
 
-type Special = "mega" | "ultra" | "z" | "dynamax" | "tera";
-const SUFFIX: Record<Special, string> = { mega: " mega", ultra: " ultra", z: " zmove", dynamax: " dynamax", tera: " terastallize" };
-const SPECIAL_LABEL: Record<Special, string> = { mega: "Mega Evolve", ultra: "Ultra Burst", z: "Z-Move", dynamax: "Dynamax", tera: "Terastallize" };
 
 export function ActionPanel({ state, onChoose }: { state: BattleState; onChoose: (choice: string) => void }) {
   const { request, helpers, status, view, refused } = state;
@@ -117,9 +115,8 @@ function Choices({ request, helpers, onChoose, refused }: { request: ParsedReque
     if (active.canDynamax) specials.push({ key: "dynamax", label: SPECIAL_LABEL.dynamax });
     if (active.canTera) specials.push({ key: "tera", label: `Terastallize · ${active.canTera}` });
   }
-  // Mega Evolution and Ultra Burst happen on their own; they are not a choice the player can decline, so they are just on.
-  const optional = specials.filter((s) => s.key !== "mega" && s.key !== "ultra");
-  const automatic = specials.find((s) => s.key === "mega" || s.key === "ultra");
+  // Every one of these is the player's choice and starts off: a Pokémon that can Mega Evolve stays as it is until the toggle is used, and the
+  // toggle applies only to the move picked this turn (this component is rebuilt for each request, so it is off again next turn).
 
   return (
     <div className="rounded-2xl border border-white/10 bg-zinc-900/60 p-3 sm:p-4">
@@ -129,8 +126,7 @@ function Choices({ request, helpers, onChoose, refused }: { request: ParsedReque
         <>
           <div className="mb-2 flex min-h-7 flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Moves</span>
-            {automatic && <span className="rounded-full bg-teal-400/15 px-2 py-0.5 text-[11px] font-semibold text-teal-200">{automatic.label} this turn</span>}
-            {optional.map((s) => (
+            {specials.map((s) => (
               <button
                 key={s.key}
                 type="button"
@@ -154,13 +150,12 @@ function Choices({ request, helpers, onChoose, refused }: { request: ParsedReque
               if (special === "dynamax" && active.maxMoves?.[i]) name = active.maxMoves[i];
               const details = helpers.moveDetails(name);
               const color = TYPE_COLORS[details.type as PokemonType] ?? "#68a090";
-              const suffix = special ? SUFFIX[special] : automatic ? SUFFIX[automatic.key] : "";
               return (
                 <button
                   key={slot.id + i}
                   type="button"
                   disabled={blocked}
-                  onClick={() => onChoose(`move ${i + 1}${suffix}`)}
+                  onClick={() => onChoose(moveChoice(i + 1, special))}
                   title={details.description}
                   className="group relative overflow-hidden rounded-xl border border-white/10 bg-zinc-800/80 p-2.5 pl-4 text-left transition-colors hover:border-white/30 hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-teal-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >

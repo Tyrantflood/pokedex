@@ -7,7 +7,7 @@ import { matchesQuery, parseQuery, searchKey } from "@/lib/pokedex-search";
 import type { PokemonType } from "@/lib/pokemon-types";
 import type { PokemonSummary } from "@/lib/summary";
 import { addMember, emptyTeam, removeMember, slotOf, teamMembers, type Candidate, type Team } from "@/lib/team";
-import { ScannerLink } from "../scanner-link";
+import { BattleLink } from "../battle-link";
 import { CompareTray } from "./compare-tray";
 import { CompareView } from "./compare-view";
 import { Controls } from "./controls";
@@ -301,7 +301,7 @@ export function PokedexBrowser({ pokemon }: { pokemon: PokemonSummary[] }) {
           <h1 className="text-3xl font-bold tracking-tight">Pokédex</h1>
           <span className="font-mono text-xs uppercase tracking-widest text-teal-300/70">Dex-Link</span>
           <div className="ml-auto self-center">
-            <ScannerLink href="/battle">Battle</ScannerLink>
+            <BattleLink />
           </div>
         </div>
         <Controls

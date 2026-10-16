@@ -3,15 +3,17 @@
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ScannerLink } from "../scanner-link";
+import { leavingCostsForfeit } from "@/lib/battle/active-room";
 import { formatByKey } from "@/lib/battle/formats";
 import { newTeamId, upsertTeam } from "@/lib/battle/my-teams";
 import type { RecommendedTeam } from "@/lib/battle/recommended";
-import { isRoomCode, newRoomCode } from "@/lib/battle/room-protocol";
+import { FORFEIT_AFTER_MS, isRoomCode, newRoomCode } from "@/lib/battle/room-protocol";
 import { BattleSession } from "./battle-session";
 import { Lobby } from "./lobby";
 import { RoomScreen } from "./room-screen";
 import { createKey, parseSettings, SETTINGS_KEY, type BattleSettings } from "./settings";
 import { resolvePick } from "./team-source";
+import { useActiveRoom } from "./use-active-room";
 import { useMyTeams } from "./use-my-teams";
 import { useStored } from "./use-stored";
 import type { BattleConfig } from "./use-battle-session";
@@ -25,6 +27,13 @@ export function BattleApp() {
   const [startError, setStartError] = useState<string | null>(null);
   const router = useRouter();
   const roomParam = useSearchParams().get("room");
+  const { active, clear: clearActive } = useActiveRoom();
+  // A battle under way in this room: walking away from it starts the forfeit clock, so Back to Pokédex asks first.
+  const liveHere = roomParam !== null && active?.code === roomParam && leavingCostsForfeit(active);
+  const leaveRoom = () => {
+    clearActive(); // leaving on purpose (cancelling an invite, backing out of team choice, after the result) is not something to come back to
+    router.push("/battle");
+  };
   const update = (next: BattleSettings) => setRawSettings(JSON.stringify(next));
   const begin = (config: BattleConfig) => setRun((previous) => ({ id: (previous?.id ?? 0) + 1, config }));
 
@@ -68,10 +77,21 @@ export function BattleApp() {
   return (
     <main className="mx-auto w-full max-w-6xl px-4 pb-10 pt-4">
       <nav className="flex items-center justify-between">
-        <ScannerLink href="/">Back to Pokédex</ScannerLink>
+        <ScannerLink
+          href="/"
+          onClick={(e) => {
+            if (liveHere && !window.confirm(`Your battle is still going. If you leave and are not back within ${FORFEIT_AFTER_MS / 1000} seconds, you forfeit.
+
+You can come back with the Return to battle button on the Pokédex.
+
+Leave the battle anyway?`)) e.preventDefault();
+          }}
+        >
+          Back to Pokédex
+        </ScannerLink>
       </nav>
       {roomParam !== null ? (
-        <RoomScreen code={isRoomCode(roomParam) ? roomParam : null} onLeave={() => router.push("/battle")} />
+        <RoomScreen code={isRoomCode(roomParam) ? roomParam : null} onLeave={leaveRoom} />
       ) : run ? (
         // Keyed by run, so "Rematch" mounts a fresh battle (with a new recommended team for the CPU, if the format has teams).
         <BattleSession
