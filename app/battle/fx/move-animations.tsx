@@ -1,12 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { motion, type TargetAndTransition, type Transition } from "framer-motion";
 import { BANNER_MS, seeded, typeFx } from "@/lib/battle/move-fx";
 import type { PlayedCue } from "../use-battle-session";
 import { angleDeg, centerOf, distance, type Point, type Size } from "./geometry";
 import { Particles } from "./particles";
 import { Shape } from "./shapes";
+import { Wa, type Frames, type Timing } from "./wa";
 
 interface Props {
   cue: PlayedCue;
@@ -24,7 +24,7 @@ const at = (p: Point, children: ReactNode, key?: string) => (
 /** An expanding ring: the staple of auras, shockwaves and pulses. */
 function Ring({ color, px, delay, ts, duration = 0.6, from = 0.3, to = 2.2 }: { color: string; px: number; delay: number; ts: number; duration?: number; from?: number; to?: number }) {
   return (
-    <motion.span
+    <Wa
       className="absolute rounded-full"
       style={{ left: -px / 2, top: -px / 2, width: px, height: px, border: `3px solid ${color}`, background: `radial-gradient(circle, ${color}22 0%, transparent 70%)` }}
       initial={{ opacity: 0 }}
@@ -35,9 +35,9 @@ function Ring({ color, px, delay, ts, duration = 0.6, from = 0.3, to = 2.2 }: { 
 }
 
 /** A glowing ball: radial gradient, so there is no blur filter to rasterise. */
-function Orb({ color, px, animate, transition }: { color: string; px: number; animate: TargetAndTransition; transition: Transition }) {
+function Orb({ color, px, animate, transition }: { color: string; px: number; animate: Frames; transition: Timing }) {
   return (
-    <motion.span
+    <Wa
       className="absolute rounded-full"
       style={{ left: -px / 2, top: -px / 2, width: px, height: px, background: `radial-gradient(circle, #fff 0%, ${color} 38%, ${color}00 72%)` }}
       initial={{ opacity: 0 }}
@@ -71,7 +71,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
       return at(
         from,
         trail.map((lag, i) => (
-          <motion.span
+          <Wa
             key={i}
             className="absolute"
             style={{ left: -17 * unit, top: -17 * unit, width: 34 * unit, height: 34 * unit }}
@@ -83,7 +83,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
             <span className="absolute inset-[18%]">
               <Shape shape={look.shape} color={color} accent={accent} size={20 * unit} />
             </span>
-          </motion.span>
+          </Wa>
         )),
       );
     }
@@ -96,14 +96,14 @@ export function MoveAnimation({ cue, size, ts }: Props) {
         <>
           <Orb color={color} px={46 * unit} animate={{ scale: [0.3, 1.2, 0.2], opacity: [0, 1, 0] }} transition={{ duration: dur * 0.5 * ts, delay: start * ts }} />
           <div style={{ position: "absolute", left: 0, top: 0, width: len, height: 0, transform: `rotate(${angle}deg)`, transformOrigin: "0 0" }}>
-            <motion.span
+            <Wa
               className="absolute origin-left"
               style={{ left: 0, top: -13 * unit, width: len, height: 26 * unit, borderRadius: 999, background: `linear-gradient(90deg, ${accent}00, ${color}88 30%, ${color}88 70%, ${accent}00)` }}
               initial={{ opacity: 0 }}
               animate={{ scaleX: [0, 1, 1], opacity: [0, 1, 0] }}
               transition={{ duration: dur * 0.9 * ts, delay: (start + dur * 0.1) * ts, times: [0, 0.3, 1] }}
             />
-            <motion.span
+            <Wa
               className="absolute origin-left"
               style={{ left: 0, top: -5 * unit, width: len, height: 10 * unit, borderRadius: 999, background: `linear-gradient(90deg, #ffffff, ${accent} 60%, ${color})` }}
               initial={{ opacity: 0 }}
@@ -147,22 +147,24 @@ export function MoveAnimation({ cue, size, ts }: Props) {
     case "earthquake": {
       // The whole field shakes (Field), dust and rubble jump off the ground, cracks open under both platforms.
       const base = size.h * 0.88;
-      const crack = (p: Point, key: string, d: number) =>
-        at(
+      const crack = (p: Point, key: string, d: number) => {
+        const tilt = (rnd() - 0.5) * 8;
+        return at(
           { x: p.x, y: (p.y > size.h * 0.5 ? size.h * 0.89 : size.h * 0.51) },
-          <motion.span
+          <Wa
             key={key}
             className="absolute origin-center"
-            style={{ left: -size.w * 0.17, top: -2, width: size.w * 0.34, height: 4, background: "linear-gradient(90deg, transparent, #3b2a14 20%, #1a1208 50%, #3b2a14 80%, transparent)", transform: `rotate(${(rnd() - 0.5) * 8}deg)` }}
+            style={{ left: -size.w * 0.17, top: -2, width: size.w * 0.34, height: 4, background: "linear-gradient(90deg, transparent, #3b2a14 20%, #1a1208 50%, #3b2a14 80%, transparent)" }}
             initial={{ opacity: 0, scaleX: 0.1 }}
-            animate={{ opacity: [0, 1, 1, 0], scaleX: [0.1, 1, 1, 1] }}
+            animate={{ opacity: [0, 1, 1, 0], scaleX: [0.1, 1, 1, 1], rotate: tilt }}
             transition={{ duration: dur * 0.9 * ts, delay: (start + d) * ts, times: [0, 0.2, 0.75, 1] }}
           />,
           key,
         );
+      };
       return (
         <>
-          <motion.div
+          <Wa as="div"
             aria-hidden
             className="pointer-events-none absolute inset-0 bg-amber-900"
             initial={{ opacity: 0 }}
@@ -189,14 +191,14 @@ export function MoveAnimation({ cue, size, ts }: Props) {
             <>
               <Orb color="#ffb347" px={80 * unit} animate={{ scale: [0.15, 1.5, 1.8], opacity: [0, 1, 0] }} transition={{ duration: dur * 0.42 * ts, delay: start * ts, times: [0, 0.8, 1] }} />
               <div style={{ position: "absolute", left: 0, top: 0, width: len, height: 0, transform: `rotate(${angle}deg)`, transformOrigin: "0 0" }}>
-                <motion.span
+                <Wa
                   className="absolute origin-left"
                   style={{ left: 0, top: -24 * unit, width: len, height: 48 * unit, borderRadius: 999, background: "linear-gradient(90deg, #ff8a3d00, #ff8a3dbb 20%, #ffd28099 80%, #ffd28000)" }}
                   initial={{ opacity: 0 }}
                   animate={{ scaleX: [0, 1, 1], opacity: [0, 1, 0] }}
                   transition={{ duration: dur * 0.58 * ts, delay: (start + dur * 0.4) * ts, times: [0, 0.22, 1] }}
                 />
-                <motion.span
+                <Wa
                   className="absolute origin-left"
                   style={{ left: 0, top: -11 * unit, width: len, height: 22 * unit, borderRadius: 999, background: "linear-gradient(90deg, #fff, #fff6dc 70%, #ffe6a8)" }}
                   initial={{ opacity: 0 }}
@@ -207,7 +209,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
             </>,
           )}
           {at(to, <Ring color="#ffb347" px={90 * unit} delay={start + dur * 0.55} ts={ts} to={3.2} duration={0.55} />)}
-          <motion.div
+          <Wa as="div"
             aria-hidden
             className="pointer-events-none absolute inset-0 bg-white"
             initial={{ opacity: 0 }}
@@ -224,7 +226,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
         <>
           {at(
             from,
-            <motion.span
+            <Wa
               className="absolute rounded-full"
               style={{
                 left: -r,
@@ -245,7 +247,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
                   <path d="M36 42 L50 50 L50 66 L36 74 L22 66 L22 50Z" />
                 </g>
               </svg>
-            </motion.span>,
+            </Wa>,
           )}
           <Particles type="steel" at={from} seed={cue.id} timeScale={ts} delayS={start + 0.1} reach={60 * unit} count={6} size={16 * unit} />
         </>
@@ -268,7 +270,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
       });
       return (
         <>
-          <motion.div
+          <Wa as="div"
             aria-hidden
             className="pointer-events-none absolute inset-0"
             style={{ background: "radial-gradient(circle at 50% 30%, rgba(255,255,200,0.7), rgba(247,208,44,0.25) 60%, transparent)" }}
@@ -277,7 +279,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
             transition={{ duration: dur * 0.8 * ts, delay: (start + 0.05) * ts, times: [0, 0.12, 0.3, 0.45, 1] }}
           />
           {bolts.map((b) => (
-            <motion.svg
+            <Wa as="svg"
               key={b.i}
               aria-hidden
               className="pointer-events-none absolute"
@@ -289,7 +291,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
             >
               <polyline points={b.points} fill="none" stroke="#f7d02c" strokeWidth={9 * unit} strokeLinejoin="round" strokeLinecap="round" opacity="0.55" />
               <polyline points={b.points} fill="none" stroke="#fffbe0" strokeWidth={3.5 * unit} strokeLinejoin="round" strokeLinecap="round" />
-            </motion.svg>
+            </Wa>
           ))}
           <Particles type="electric" at={to} seed={cue.id} timeScale={ts} delayS={start + 0.2} reach={60 * unit} count={8} size={20 * unit} />
         </>
@@ -302,7 +304,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
       const waveH = size.h * 0.46;
       return (
         <>
-          <motion.div
+          <Wa as="div"
             aria-hidden
             className="pointer-events-none absolute"
             style={{ left: 0, top: size.h * 0.5, width: waveW, height: waveH }}
@@ -327,7 +329,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
                 <path d="M0 70 C30 40 60 40 90 62 C120 84 150 84 180 58 C215 28 255 24 290 44 C320 60 345 40 372 12 C382 2 394 6 400 20" fill="none" stroke="#ffffff" strokeWidth="5" strokeLinecap="round" opacity="0.9" />
               </svg>
             </div>
-          </motion.div>
+          </Wa>
           <Particles type="water" at={to} seed={cue.id} timeScale={ts} delayS={start + dur * 0.5} reach={70 * unit} count={10} size={24 * unit} />
         </>
       );
@@ -351,7 +353,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
         <>
           <Ring color="#ff5a4d" px={86 * unit} delay={start} ts={ts} />
           <Ring color="#ffb199" px={86 * unit} delay={start + 0.3} ts={ts} />
-          <motion.div
+          <Wa as="div"
             className="absolute"
             style={{ left: 0, top: 0, width: 0, height: 0 }}
             initial={{ opacity: 0 }}
@@ -359,7 +361,7 @@ export function MoveAnimation({ cue, size, ts }: Props) {
             transition={{ duration: dur * ts, delay: start * ts, ease: "easeInOut", times: [0, 0.2, 0.8, 1] }}
           >
             {[0, 120, 240].map((a, i) => sword(a, i))}
-          </motion.div>
+          </Wa>
         </>,
       );
     }

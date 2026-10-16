@@ -1,9 +1,9 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { seeded, typeFx, type ParticleMotion, type ParticleShape } from "@/lib/battle/move-fx";
 import type { Point } from "./geometry";
 import { Shape } from "./shapes";
+import { Wa } from "./wa";
 
 interface Motion {
   x: number[];
@@ -106,7 +106,7 @@ export function Particles({
         const m = pathFor(kind, rnd, i, n, reach, outward);
         const colorIsAccent = i % 3 === 2;
         return (
-          <motion.span
+          <Wa
             key={i}
             className="absolute"
             style={{ left: -big / 2, top: -big / 2, width: big, height: big }}
@@ -115,7 +115,7 @@ export function Particles({
             transition={{ duration: m.duration * timeScale, delay: (delayS + m.delay) * timeScale, ease: "easeOut" }}
           >
             <Shape shape={shape} color={colorIsAccent ? fx.colors[1] : fx.colors[0]} accent={colorIsAccent ? fx.colors[0] : fx.colors[1]} size={big} />
-          </motion.span>
+          </Wa>
         );
       })}
     </div>

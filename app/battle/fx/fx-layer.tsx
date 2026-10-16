@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { useReducedMotion } from "framer-motion";
 import { BANNER_MS, isBigHit, typeFx } from "@/lib/battle/move-fx";
 import { TYPE_COLORS } from "@/lib/type-colors";
 import type { PokemonType } from "@/lib/pokemon-types";
@@ -9,6 +9,7 @@ import type { PlayedCue } from "../use-battle-session";
 import { centerOf, type Point, type Size } from "./geometry";
 import { MoveAnimation } from "./move-animations";
 import { Particles } from "./particles";
+import { Wa } from "./wa";
 
 const STATUS_LOOK: Record<string, string> = { brn: "fire", par: "electric", psn: "poison", tox: "poison", frz: "ice", slp: "ghost" };
 
@@ -20,7 +21,7 @@ export function MoveBanner({ cue }: { cue: PlayedCue | null }) {
   const total = cue.reduced || reduced ? 0.85 : ((BANNER_MS + (cue.fx?.durationMs ?? 0) + 250) / 1000) * cue.timeScale;
   const color = TYPE_COLORS[(cue.moveType ?? "normal") as PokemonType] ?? "#a8a77a";
   return (
-    <motion.div
+    <Wa as="div"
       key={cue.id}
       aria-hidden
       className="pointer-events-none absolute inset-x-2 top-2 z-20 flex justify-center"
@@ -36,7 +37,7 @@ export function MoveBanner({ cue }: { cue: PlayedCue | null }) {
         <span className="truncate">{cue.banner}</span>
         <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-zinc-300">{cue.moveCategory}</span>
       </span>
-    </motion.div>
+    </Wa>
   );
 }
 
@@ -132,7 +133,7 @@ function FloatLabel({ cue, at, reduced }: { cue: PlayedCue; at: Point; reduced: 
         ? "text-red-300"
         : "text-amber-200";
   return (
-    <motion.span
+    <Wa
       className={`absolute z-10 -translate-x-1/2 whitespace-nowrap rounded bg-black/65 px-1.5 py-0.5 text-xs font-bold ${tone}`}
       style={{ left: at.x, top: at.y - 38 }}
       initial={{ opacity: 0 }}
@@ -140,7 +141,7 @@ function FloatLabel({ cue, at, reduced }: { cue: PlayedCue; at: Point; reduced: 
       transition={{ duration: reduced ? 1 : 1.1 * cue.timeScale + 0.25, times: [0, 0.15, 0.7, 1] }}
     >
       {cue.label}
-    </motion.span>
+    </Wa>
   );
 }
 
@@ -148,7 +149,7 @@ function ImpactRing({ at, color, ts, big }: { at: Point; color: string; ts: numb
   const px = big ? 110 : 76;
   return (
     <div className="absolute" style={{ left: at.x, top: at.y, width: 0, height: 0 }}>
-      <motion.span
+      <Wa
         className="absolute rounded-full"
         style={{ left: -px / 2, top: -px / 2, width: px, height: px, background: `radial-gradient(circle, #ffffffcc 0%, ${color}aa 40%, ${color}00 70%)` }}
         initial={{ opacity: 0 }}
@@ -162,7 +163,7 @@ function ImpactRing({ at, color, ts, big }: { at: Point; color: string; ts: numb
 function HitFlash({ at, px }: { at: Point; px: number }) {
   return (
     <div className="absolute" style={{ left: at.x, top: at.y, width: 0, height: 0 }}>
-      <motion.span
+      <Wa
         className="absolute rounded-full bg-white"
         style={{ left: -px / 2, top: -px / 2, width: px, height: px }}
         initial={{ opacity: 0 }}
@@ -174,14 +175,14 @@ function HitFlash({ at, px }: { at: Point; px: number }) {
 }
 
 function CritFlash({ ts }: { ts: number }) {
-  return <motion.div className="absolute inset-0 bg-white" initial={{ opacity: 0 }} animate={{ opacity: [0, 0.7, 0] }} transition={{ duration: 0.3 * ts, times: [0, 0.2, 1] }} />;
+  return <Wa as="div" className="absolute inset-0 bg-white" initial={{ opacity: 0 }} animate={{ opacity: [0, 0.7, 0] }} transition={{ duration: 0.3 * ts, times: [0, 0.2, 1] }} />;
 }
 
 function ShieldFlash({ at, ts }: { at: Point; ts: number }) {
   const r = 58;
   return (
     <div className="absolute" style={{ left: at.x, top: at.y, width: 0, height: 0 }}>
-      <motion.span
+      <Wa
         className="absolute rounded-full"
         style={{ left: -r, top: -r, width: r * 2, height: r * 2, border: "3px solid rgba(125,240,255,0.95)", background: "radial-gradient(circle, rgba(125,240,255,0.12) 55%, rgba(125,240,255,0.5) 100%)" }}
         initial={{ opacity: 0 }}

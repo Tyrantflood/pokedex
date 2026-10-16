@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { animate as animateTo, AnimatePresence, motion, useAnimate, useReducedMotion } from "framer-motion";
+import { animate as animateTo, AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { BANNER_MS, isBigHit } from "@/lib/battle/move-fx";
 import { activeMon, type BattleView, type MonView, type SideId } from "@/lib/battle/protocol";
 import { LogOverlay } from "./battle-log";
 import { FxLayer, MoveBanner } from "./fx/fx-layer";
 import { centerOf, spotFor, type Size } from "./fx/geometry";
+import { play } from "./fx/wa";
 import type { PlayedCue } from "./use-battle-session";
 import { HpBar, SpriteImage, StatusChip, TypeChip } from "./ui";
 
@@ -46,7 +47,7 @@ export function BattleField({ view, cue, cues, turnLimit = 0, ownSide = "p1" }: 
   const [ref, size, scale] = useFieldSize();
   const enemySide: SideId = ownSide === "p1" ? "p2" : "p1";
   const reduced = useReducedMotion();
-  const [stage, animateStage] = useAnimate();
+  const stage = useRef<HTMLDivElement>(null);
   const shaken = useRef(0);
 
   // Screen shake: on a big hit, and for the two moves that shake the world. Only the scene moves, never the plates and text.
@@ -56,15 +57,15 @@ export function BattleField({ view, cue, cues, turnLimit = 0, ownSide = "p1" }: 
     const ts = cue.timeScale;
     if (cue.kind === "damage" && !cue.fromEffect && isBigHit(cue.amount ?? 0, !!cue.hit?.crit)) {
       const k = shakeKeyframes(cue.hit?.crit ? 10 : 7, 7);
-      void animateStage(stage.current, k, { duration: 0.42 * ts });
+      play(stage.current, k, { duration: 0.42 * ts });
     } else if (cue.kind === "move" && cue.fx?.style === "earthquake") {
       const k = shakeKeyframes(7, 18);
-      void animateStage(stage.current, k, { duration: 1.0 * ts, delay: (BANNER_MS / 1000 + 0.1) * ts });
+      play(stage.current, k, { duration: 1.0 * ts, delay: (BANNER_MS / 1000 + 0.1) * ts });
     } else if (cue.kind === "move" && cue.fx?.style === "hyperbeam") {
       const k = shakeKeyframes(5, 12);
-      void animateStage(stage.current, k, { duration: 0.7 * ts, delay: (BANNER_MS / 1000 + (cue.fx.durationMs / 1000) * 0.42) * ts });
+      play(stage.current, k, { duration: 0.7 * ts, delay: (BANNER_MS / 1000 + (cue.fx.durationMs / 1000) * 0.42) * ts });
     }
-  }, [cue, reduced, animateStage, stage]);
+  }, [cue, reduced, stage]);
 
   return (
     <div
@@ -143,7 +144,7 @@ function WeatherLayer({ weather }: { weather: string }) {
 function Combatant({ view, side, ownSide, facing, scale, cue, size }: { view: BattleView; side: SideId; ownSide: SideId; facing: "front" | "back"; scale: number; cue: PlayedCue | null; size: Size }) {
   const mon = activeMon(view, side);
   const reduced = useReducedMotion();
-  const [scope, animate] = useAnimate();
+  const scope = useRef<HTMLDivElement>(null);
   const lastCue = useRef<number>(0);
   const outer = useRef<HTMLDivElement>(null);
 
@@ -174,29 +175,29 @@ function Combatant({ view, side, ownSide, facing, scale, cue, size }: { view: Ba
         const to = centerOf(cue.target ?? side, size, cue.own);
         const vx = (to.x - from.x) * 0.8;
         const vy = (to.y - from.y) * 0.8;
-        void animate(el, { x: [0, vx, 0], y: [0, vy, 0], scale: [1, 1.08, 1] }, { duration: (cue.fx.durationMs / 1000) * ts, delay: wait * ts, times: [0, 0.85, 1], ease: "easeIn" });
+        play(el, { x: [0, vx, 0], y: [0, vy, 0], scale: [1, 1.08, 1] }, { duration: (cue.fx.durationMs / 1000) * ts, delay: wait * ts, times: [0, 0.85, 1], ease: "easeIn" });
       } else if (style === "projectile" || style === "beam" || style === "thunderbolt" || style === "surf" || style === "hyperbeam") {
         // Special: lean back and pop forward as the attack leaves.
         const back = side === "p1" ? -1 : 1;
-        void animate(el, { x: [0, back * 7, 0], scale: [1, 1.1, 1] }, { duration: 0.4 * ts, delay: (wait + (style === "hyperbeam" ? 0.5 : 0)) * ts });
+        play(el, { x: [0, back * 7, 0], scale: [1, 1.1, 1] }, { duration: 0.4 * ts, delay: (wait + (style === "hyperbeam" ? 0.5 : 0)) * ts });
       } else if (style === "earthquake") {
-        void animate(el, { y: [0, -14, 0, -9, 0] }, { duration: 0.7 * ts, delay: wait * ts });
+        play(el, { y: [0, -14, 0, -9, 0] }, { duration: 0.7 * ts, delay: wait * ts });
       } else if (style === "swordsdance") {
-        void animate(el, { rotate: [0, -6, 6, -6, 6, 0], scale: [1, 1.06, 1.06, 1.06, 1.06, 1] }, { duration: (cue.fx.durationMs / 1000) * 0.9 * ts, delay: wait * ts });
+        play(el, { rotate: [0, -6, 6, -6, 6, 0], scale: [1, 1.06, 1.06, 1.06, 1.06, 1] }, { duration: (cue.fx.durationMs / 1000) * 0.9 * ts, delay: wait * ts });
       } else if (style === "aura" || style === "pulse") {
-        void animate(el, { scale: [1, 1.1, 1] }, { duration: 0.5 * ts, delay: wait * ts });
+        play(el, { scale: [1, 1.1, 1] }, { duration: 0.5 * ts, delay: wait * ts });
       }
     } else if (cue.kind === "damage" && cue.side === side && !cue.fromEffect) {
       // Hit: a shake and a blink (opacity only); harder for a big hit.
       const hard = isBigHit(cue.amount ?? 0, !!cue.hit?.crit);
       const a = hard ? 11 : 7;
-      void animate(el, { x: [0, -a, a, -a * 0.7, a * 0.7, 0], opacity: [1, 0.3, 1, 0.3, 1, 1] }, { duration: 0.42 * ts });
+      play(el, { x: [0, -a, a, -a * 0.7, a * 0.7, 0], opacity: [1, 0.3, 1, 0.3, 1, 1] }, { duration: 0.42 * ts });
     } else if (cue.kind === "damage" && cue.side === side) {
-      void animate(el, { x: [0, -4, 4, 0] }, { duration: 0.25 * ts });
+      play(el, { x: [0, -4, 4, 0] }, { duration: 0.25 * ts });
     } else if (cue.kind === "tera" && cue.side === side) {
-      void animate(el, { scale: [1, 1.18, 1] }, { duration: 0.6 * ts });
+      play(el, { scale: [1, 1.18, 1] }, { duration: 0.6 * ts });
     }
-  }, [cue, side, reduced, animate, scope, size]);
+  }, [cue, side, reduced, scope, size]);
 
   const spot = spotFor(side, ownSide);
   return (
