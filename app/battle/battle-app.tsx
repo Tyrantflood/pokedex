@@ -7,7 +7,7 @@ import { leaveWarning, leavingCostsForfeit } from "@/lib/battle/active-room";
 import { formatByKey } from "@/lib/battle/formats";
 import { newTeamId, upsertTeam } from "@/lib/battle/my-teams";
 import type { RecommendedTeam } from "@/lib/battle/recommended";
-import { FORFEIT_AFTER_MS, isRoomCode, newRoomCode } from "@/lib/battle/room-protocol";
+import { cpuBattleName, FORFEIT_AFTER_MS, isRoomCode, newRoomCode } from "@/lib/battle/room-protocol";
 import { BattleSession } from "./battle-session";
 import { Lobby } from "./lobby";
 import { RoomScreen } from "./room-screen";
@@ -44,7 +44,7 @@ export function BattleApp() {
   // Builds the battle's settings. "Bring your own team" formats also need the player's team and a recommended team for the CPU (a big file, loaded now).
   const start = async () => {
     const format = formatByKey(settings.formatKey);
-    const base: BattleConfig = { format, difficulty: settings.difficulty, playerName: settings.name.trim() || "Trainer", turnLimit: settings.turnLimit };
+    const base: BattleConfig = { format, difficulty: settings.difficulty, playerName: cpuBattleName(settings.name), turnLimit: settings.turnLimit };
     if (!format.custom) return begin(base);
     setStarting(true);
     setStartError(null);

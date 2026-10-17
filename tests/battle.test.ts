@@ -5,7 +5,7 @@ import { startLocalBattle, type BattleMessage } from "../lib/battle/engine";
 import { FORMATS, previewNote, RANDOM_FORMATS } from "../lib/battle/formats";
 import { spriteIdFor } from "../lib/battle/ids";
 import { makeLookups } from "../lib/battle/dex-facts";
-import { applyLine, createView, syncRequest, type BattleView, parseCondition, parseDetails, parseIdent, parseRequest } from "../lib/battle/protocol";
+import { applyLine, applyLineSafely, cloneView, createView, syncRequest, type BattleView, parseCondition, parseDetails, parseIdent, parseRequest } from "../lib/battle/protocol";
 import { generateTeam } from "../lib/battle/teams";
 import { pokemonSnapshot } from "./fixtures/load";
 
@@ -204,4 +204,52 @@ test("the lobby's note about leads follows the format: Team Preview from Gen 5, 
     else assert.match(note, new RegExp(`Generation ${f.gen} has no team preview`), f.key);
     assert.ok(!/no team preview.*first Pokémon leads/i.test(note) || f.gen < 5, `${f.key} must not say there is no preview`);
   }
+});
+
+test("Gen 5's Frisk names no owner for the item it finds: the line is read, not a crash (found by a 30-battle soak)", () => {
+  const view = createView();
+  const lookups = makeLookups(Dex.forFormat("gen5randombattle"));
+  const result = applyLine(view, "|-item||Choice Specs|[from] ability: Frisk|[of] p1a: Wigglytuff", "p2", lookups);
+  assert.ok(result.delay > 0);
+  assert.match(view.log.at(-1)!.text, /Wigglytuff frisked its target and found Choice Specs/);
+  // Later generations name the target and the item is attached to it.
+  applyLine(view, "|switch|p2a: Snorlax|Snorlax, L80, M|100/100", "p1", lookups);
+  applyLine(view, "|-item|p2a: Snorlax|Leftovers|[from] ability: Frisk|[of] p1a: Wigglytuff|[identify]", "p1", lookups);
+  assert.equal(view.sides.p2.mons[0].item, "Leftovers");
+});
+
+test("a line the reducer cannot read is skipped and reported, never thrown (a throw would freeze the playback or the CPU)", () => {
+  const view = createView();
+  const lookups = makeLookups(Dex.forFormat("gen9randombattle"));
+  assert.throws(() => applyLine(view, "|switch|p9a: Mystery|Pikachu, L50|100/100", "p1", lookups), "the plain reducer does throw on a side that does not exist");
+  const reports: string[] = [];
+  const result = applyLineSafely(view, "|switch|p9a: Mystery|Pikachu, L50|100/100", "p1", lookups, (_error, line) => reports.push(line));
+  assert.deepEqual(result, { delay: 0 });
+  assert.deepEqual(reports, ["|switch|p9a: Mystery|Pikachu, L50|100/100"]);
+  // and the battle after it carries on
+  applyLineSafely(view, "|switch|p1a: Pikachu|Pikachu, L50|100/100", "p1", lookups);
+  assert.equal(view.sides.p1.mons[0].species, "Pikachu");
+});
+
+test("cloneView copies the view independently of the original (sides, mons, log), sharing only the immutable log entries", () => {
+  const lookups = makeLookups(Dex.forFormat("gen9randombattle"));
+  const view = createView();
+  applyLine(view, "|switch|p1a: Pikachu|Pikachu, L50|100/100", "p1", lookups);
+  applyLine(view, "|turn|1", "p1", lookups);
+  const copy = cloneView(view);
+  assert.deepEqual(copy, view);
+  view.sides.p1.mons[0].hp = 1;
+  view.sides.p1.mons[0].boosts.atk = 2;
+  view.sides.p1.conditions.push("Stealth Rock");
+  applyLine(view, "|turn|2", "p1", lookups);
+  assert.equal(copy.sides.p1.mons[0].hp, 100, "the copy's Pokémon did not change");
+  assert.deepEqual(copy.sides.p1.mons[0].boosts, {});
+  assert.deepEqual(copy.sides.p1.conditions, []);
+  const before = copy.log.length;
+  assert.equal(view.log.length, before + 1);
+  assert.equal(copy.log[0], view.log[0], "an entry already pushed is shared, not copied");
+  // trimming the original's log (400 at most) leaves the copy's alone
+  for (let i = 0; i < 450; i++) applyLine(view, `|turn|${i + 3}`, "p1", lookups);
+  assert.equal(view.log.length, 400);
+  assert.equal(copy.log.length, before);
 });

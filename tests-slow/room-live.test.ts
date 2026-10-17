@@ -322,3 +322,44 @@ test("the turn timer: after 90 seconds a random legal choice is made for a playe
   a.drop();
   b.drop();
 });
+
+test("a battle goes on correctly when the room sits idle between turns long enough to be evicted and rebuilt (set BATTLE_SLOW=1; about 80 s)", { skip: HOST && process.env.BATTLE_SLOW ? false : "set BATTLE_HOST and BATTLE_SLOW=1" }, async () => {
+  const code = newRoomCode();
+  const a = new Client(code, "live-client-iiii");
+  const b = new Client(code, "live-client-jjjj");
+  await a.connect();
+  a.hello("Prince", { formatKey: "gen9", turnLimit: 0 });
+  await a.until(() => a.of("welcome").length > 0, 10000, "the creator's welcome");
+  await b.connect();
+  b.hello("Friend");
+  for (let turn = 1; turn <= 3; turn++) {
+    await a.until(() => !!a.request && !!b.request, 30000, `both being asked on turn ${turn}`);
+    // Nobody says anything for 25 s: the Durable Object is evicted from memory (hibernation) and rebuilt by replay on the next message.
+    await new Promise((r) => setTimeout(r, 25_000));
+    for (const c of [a, b]) {
+      const request = c.request!;
+      c.request = null;
+      c.send({ type: "choose", choice: answer(request), rqid: request.rqid });
+    }
+    // A faint in the turn asks one side for a switch before the next turn can start: answer whatever is asked, at once, until it does.
+    const deadline = Date.now() + 30000;
+    while (!a.lines().some((l) => l.startsWith(`|turn|${turn + 1}`)) && !a.over) {
+      if (Date.now() > deadline) {
+        const tail = (c: Client) => c.messages.slice(-5).map((m) => (m.type === "battle" ? `battle(lines ${m.lines.length}, request ${m.request ? "yes" : "no"}, error ${m.error ?? "none"})` : m.type === "status" ? `status(${m.phase})` : m.type)).join(", ");
+        throw new Error(`timed out waiting for turn ${turn + 1} to start. A saw: ${tail(a)}. B saw: ${tail(b)}. A request ${JSON.stringify(a.request && { rqid: a.request.rqid, forceSwitch: a.request.forceSwitch })}, B request ${JSON.stringify(b.request && { rqid: b.request.rqid, forceSwitch: b.request.forceSwitch })}`);
+      }
+      for (const c of [a, b]) {
+        const request = c.request;
+        if (!request || (!request.forceSwitch && request.active && c.lines().filter((l) => l.startsWith("|turn|")).length > turn)) continue;
+        if (!request.forceSwitch && request.active) continue; // an ordinary question belongs to the next turn
+        c.request = null;
+        c.send({ type: "choose", choice: answer(request), rqid: request.rqid });
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  assert.ok(!a.of("battle").some((m) => m.error) && !b.of("battle").some((m) => m.error), "no choice was refused after the idle gaps");
+  assert.equal(a.lines().filter((l) => l.startsWith("|turn|")).length >= 3, true);
+  a.drop();
+  b.drop();
+});

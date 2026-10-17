@@ -1055,3 +1055,75 @@ test("rematch in a bring-your-own-team room goes back to choosing teams, then pl
   assert.equal(rig.logic.snapshot().meta?.phase, "playing");
   assert.deepEqual(rig.request(a)!.team.map((m) => m.species), t3.sets.map((s) => s.species), "the new team is the one in the new battle");
 });
+
+test("the name used against the CPU is cleaned like a friend's and can never be the CPU's own", async () => {
+  const { cpuBattleName } = await import("../lib/battle/room-protocol");
+  assert.equal(cpuBattleName("  Prince "), "Prince");
+  assert.equal(cpuBattleName(""), "Trainer");
+  assert.equal(cpuBattleName("   "), "Trainer");
+  assert.equal(cpuBattleName(undefined), "Trainer");
+  assert.equal(cpuBattleName("A|B\nC<d>"), "ABCd");
+  assert.equal(cpuBattleName("x".repeat(40)).length, 18);
+  assert.equal(cpuBattleName("CPU (Normal)"), "CPU (Normal) (you)");
+  assert.equal(cpuBattleName("cpu"), "cpu (you)");
+  assert.ok(cpuBattleName("CPU (Normal)") !== "CPU (Normal)" && cpuBattleName("CPU (Easy)") !== "CPU (Easy)");
+  assert.equal(cpuBattleName("Cpuguy"), "Cpuguy", "only a name that starts with the word CPU is changed");
+});
+
+test("fuzz: thousands of random, malformed and out-of-order messages never crash the room or break its rules", async () => {
+  const pools: Record<string, ReturnType<typeof teamsOf>> = { "team-gen9ou": teamsOf("team-gen9ou"), "team-gen4ou": teamsOf("team-gen4ou"), gen9: teamsOf("team-gen9ou") };
+  let pool = pools.gen9;
+  const garbage = ["", "{", "[]", "null", "0", '{"type":"hello"}', '{"type":"choose"}', '{"type":"team","packed":5}', '{"type":"constructor"}', '{"__proto__":{"type":"ping"}}', "x".repeat(5000), "\u0000\u0001", '{"type":"hello","clientId":"abcdefgh12345678","name":"' + "n".repeat(500) + '"}'];
+  let seed = 12345;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const pick = <T,>(items: T[]) => items[Math.floor(rnd() * items.length)];
+  const ids = [A, B, C];
+  const choices = ["move 1", "move 2", "move 4 mega", "switch 2", "switch 6", "default", "team 1", "team 123456", "move 9", "switch 0", ">p1 move 1", "move 1\n>forcewin p2"];
+  const reached = new Set<string>();
+  for (const formatKey of ["gen9", "team-gen9ou", "team-gen4ou"]) {
+    pool = pools[formatKey];
+    const rig = new Rig();
+    const conns = [rig.connection(), rig.connection(), rig.connection(), rig.connection()];
+    for (let i = 0; i < 2500; i++) {
+      const conn = pick(conns);
+      const r = rnd();
+      let message: ClientMessage | string;
+      if (r < 0.1) message = pick(garbage);
+      else if (r < 0.25) message = { type: "hello", clientId: pick(ids), name: pick(["Prince", "Friend", "P|x", "<b>", ""]), config: rnd() < 0.5 ? { formatKey, turnLimit: pick([0, 30, 50, -5, 999]) } : undefined };
+      else if (r < 0.5) message = { type: "choose", choice: pick(choices), rqid: pick([0, 1, 2, 3, 5, 99, -1]) };
+      else if (r < 0.65) message = { type: "team", packed: rnd() < 0.7 ? pick(pool).packed : pick(["", "garbage", "|||||", "a".repeat(2999)]) };
+      else if (r < 0.72) message = { type: "unready" };
+      else if (r < 0.8) message = { type: "rematch" };
+      else if (r < 0.85) message = { type: "forfeit" };
+      else message = { type: "ping" };
+      await rig.send(conn, message);
+      if (rig.logic.snapshot().meta) reached.add(`${formatKey}:${rig.logic.snapshot().meta!.phase}`);
+      if (i % 50 === 0) {
+        rig.time += 3000; // the rate limit is per connection per ten seconds; let it recover
+        if (rnd() < 0.2) await rig.logic.alarm();
+      }
+      if (i % 500 === 499) {
+        rig.restart(); // an eviction in the middle of it all
+        for (let c = 0; c < conns.length; c++) conns[c] = rig.connection();
+      }
+    }
+    // The run was not just refusals: it got into the later phases.
+    assert.ok(reached.has(`${formatKey}:playing`), `${formatKey} never reached playing: ${[...reached].join(", ")}`);
+    // The rules held throughout.
+    const snap = rig.logic.snapshot();
+    if (snap.meta) {
+      assert.ok(["waiting", "teams", "playing", "ended"].includes(snap.meta.phase), `${formatKey}: phase ${snap.meta.phase}`);
+      assert.ok(snap.meta.players.p1 === null || snap.meta.players.p1.name.length <= 18, "names stay short");
+      assert.ok(!snap.meta.players.p1?.name.match(/[|<>\n]/) && !snap.meta.players.p2?.name.match(/[|<>\n]/), "names carry no protocol characters");
+    }
+    for (const [id, messages] of rig.sent) {
+      for (const m of messages) {
+        if (m.type === "battle") assert.ok(Array.isArray(m.lines), `${id}: a battle message with no lines`);
+        assert.ok(["welcome", "status", "battle", "error", "pong", "team-result", "timeout"].includes(m.type), `${formatKey}: unknown message type ${m.type}`);
+      }
+    }
+  }
+});

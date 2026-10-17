@@ -171,7 +171,13 @@ test("in real battles, no effectiveness text ever plays before the damage it bel
             let k = i + 1;
             while (k < steps.length && /^\|-(crit|supereffective|resisted)\|/.test(steps[k].line)) k++;
             const after = steps[k]?.line ?? "";
-            assert.ok(!(after.startsWith("|-damage|") && !after.includes("[from]")), `text before its damage: ${step.line} then ${after}`);
+            // A multi-hit move ("-supereffective, -damage, -supereffective, -damage, -hitcount") correctly puts the first hit's text between the two
+            // damages: that run is preceded by the damage it describes. Only a run with no damage before it that is followed by damage is wrong.
+            let first = i;
+            while (first > 0 && /^\|-(crit|supereffective|resisted)\|/.test(steps[first - 1].line)) first--;
+            const before = steps[first - 1]?.line ?? "";
+            const afterItsDamage = before.startsWith("|-damage|") && !before.includes("[from]");
+            assert.ok(afterItsDamage || !(after.startsWith("|-damage|") && !after.includes("[from]")), `text before its damage: ${step.line} then ${after}`);
           }
         });
         for (const step of steps) applyLine(view, step.line, "p1", battle.lookups);
@@ -196,4 +202,12 @@ test("in real battles, no effectiveness text ever plays before the damage it bel
   });
   assert.ok(checkedHits > 10, "the battle had hits");
   assert.ok(withText > 0, "and some of them were crits or super effective/resisted");
+});
+
+test("a multi-hit move keeps each hit's text after that hit's damage (found when a random battle had Gear Grind hit twice)", () => {
+  const lines = ["|move|p2a: Klinklang|Gear Grind|p1a: Armaldo", "|-supereffective|p1a: Armaldo", "|-damage|p1a: Armaldo|186/278", "|-supereffective|p1a: Armaldo", "|-damage|p1a: Armaldo|102/278", "|-hitcount|p1a: Armaldo|2"];
+  const steps = sequenceLines(lines);
+  assert.deepEqual(steps.map((s) => s.line), [lines[0], lines[2], lines[1], lines[4], lines[3], lines[5]]);
+  assert.equal(steps[1].hit?.super, true);
+  assert.equal(steps[3].hit?.super, true);
 });

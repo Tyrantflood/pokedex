@@ -134,8 +134,14 @@ export function createView(): BattleView {
   return { gen: 9, turn: 0, sides: { p1: side("p1"), p2: side("p2") }, weather: "", terrain: "", fieldEffects: [], log: [], winner: null };
 }
 
+/**
+ * A copy the screen can keep while the playback goes on changing the original. It is made once per protocol line, so it must be cheap: the log
+ * (up to 400 entries) is append-only, entries are never changed after they are pushed, so the copy shares them and only copies the list; the
+ * rest of the view is small and cloned deeply. (A full structuredClone cost 0.5 ms per line, mostly the log.)
+ */
 export function cloneView(view: BattleView): BattleView {
-  return structuredClone(view);
+  const { log, ...rest } = view;
+  return { ...structuredClone(rest), log: log.slice() };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -612,6 +618,12 @@ export function applyLine(view: BattleView, line: string, ownSide: SideId, looku
     }
     case "-item":
     case "-enditem": {
+      // Gen 5's Frisk names no owner ("|-item||Choice Specs|[from] ability: Frisk|[of] p1a: Wigglytuff"): the line is only about what was found.
+      if (!/^p[12]/.test(arg(0))) {
+        const finder = tags(parts.slice(3)).of;
+        push(view, `${finder && /^p[12]/.test(finder) ? `${label(view, ownSide, parseIdent(finder))} frisked its target and found` : "A Pokémon was frisked and"} ${arg(1)}.`);
+        return { delay: HOLD.text };
+      }
       const ident = parseIdent(arg(0));
       const mon = monFor(view, ident, lookups);
       mon.item = cmd === "-item" ? arg(1) : null;
@@ -799,3 +811,19 @@ export function syncRequest(view: BattleView, side: SideId, request: ParsedReque
   }
   s.teamSize = Math.max(s.teamSize, request.team.length);
 }
+
+/**
+ * `applyLine` for the places that must never stop: the screen's playback queue and the CPU. A line the reducer cannot make sense of (a message
+ * format it has not met: Gen 5's Frisk was one) is skipped and reported rather than thrown, because an exception there leaves the playback
+ * frozen on a battle that is still going, or the CPU never answering.
+ */
+export function applyLineSafely(view: BattleView, line: string, ownSide: SideId, lookups: Lookups, report: (error: unknown, line: string) => void = defaultReport): LineResult {
+  try {
+    return applyLine(view, line, ownSide, lookups);
+  } catch (error) {
+    report(error, line);
+    return { delay: 0 };
+  }
+}
+
+const defaultReport = (error: unknown, line: string) => console.error("Skipped a battle line the reducer could not read:", line, error);

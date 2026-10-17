@@ -138,3 +138,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return null;
   }
 }
+
+/**
+ * The name the player is known by in a battle against the CPU: cleaned like a friend's (no control characters, no "|" or angle brackets, which
+ * would corrupt the protocol lines "|win|Name"), at most 18 characters, never empty, and never the CPU's own name (the winner is found by name).
+ */
+export function cpuBattleName(raw: unknown): string {
+  const cleaned = sanitizeName(typeof raw === "string" && raw.trim() ? raw : "Trainer");
+  return /^cpu\b/i.test(cleaned) ? `${cleaned.slice(0, 13)} (you)` : cleaned;
+}

@@ -7,7 +7,7 @@ import { cryUrl } from "@/lib/battle/ids";
 import type { BattleFormat } from "@/lib/battle/formats";
 import { moveHoldMs, planMove, sequenceLines, type HitFlags, type MoveFx } from "@/lib/battle/move-fx";
 import { speedFor } from "@/lib/battle/speed";
-import { applyLine, cloneView, createView, syncRequest, type BattleView, type Cue, type ParsedRequest, type SideId } from "@/lib/battle/protocol";
+import { applyLineSafely, cloneView, createView, syncRequest, type BattleView, type Cue, type ParsedRequest, type SideId } from "@/lib/battle/protocol";
 import type { PlayerStatus, RoomConfig, RoomPhase } from "@/lib/battle/room-protocol";
 // Type-only: the simulator itself is loaded with `import()` below, only when a battle starts.
 import type { BattleMessage, Difficulty, LocalBattle } from "@/lib/battle/engine";
@@ -150,7 +150,7 @@ export function useBattleSession(spec: SessionSpec | null, options: { muted: boo
             // Catching up after a refresh or a reconnect: this is the whole log, so start the view afresh and apply it without the show.
             Object.assign(draft, createView());
             recent = [];
-            for (const line of message.lines) applyLine(draft, line, own, battle.lookups);
+            for (const line of message.lines) applyLineSafely(draft, line, own, battle.lookups);
             if (message.request) {
               syncRequest(draft, own, message.request, battle.lookups);
               lastRequest.current = message.request.wait ? null : message.request;
@@ -161,7 +161,7 @@ export function useBattleSession(spec: SessionSpec | null, options: { muted: boo
           }
           // The simulator reports "super effective" before the damage; play it after the HP bar has moved (see sequenceLines).
           for (const step of sequenceLines(message.lines)) {
-            const result = applyLine(draft, step.line, own, battle.lookups);
+            const result = applyLineSafely(draft, step.line, own, battle.lookups);
             if (result.cue?.kind === "move") lastMoveType = result.cue.moveType ?? lastMoveType;
             if (!result.delay) continue;
             const o = optionsRef.current;
@@ -181,10 +181,12 @@ export function useBattleSession(spec: SessionSpec | null, options: { muted: boo
             publish(cue ? { cue, cues: live } : {});
             if (cue?.kind === "switch" && !optionsRef.current.muted) {
               const mon = draft.sides[cue.side].mons[draft.sides[cue.side].active];
-              if (mon) playCry(cryUrl(mon.spriteId)).catch(() => {});
+              if (mon && !document.hidden) playCry(cryUrl(mon.spriteId)).catch(() => {});
             }
             // Reduced motion shortens the waits (x6) but never below a readable moment for the banner (moveHoldMs is already absolute).
-            await sleep(cue?.kind === "move" && o.reducedMotion ? delay : delay / speed);
+            // A tab nobody is looking at (a locked phone, another tab) plays through at once: browsers slow its timers to about one a second, which
+            // would leave a long battle crawling, and the turn timer keeps running while the player waits for the question to appear.
+            await sleep(document.hidden ? 0 : cue?.kind === "move" && o.reducedMotion ? delay : delay / speed);
           }
           if (message.request) {
             syncRequest(draft, own, message.request, battle.lookups);

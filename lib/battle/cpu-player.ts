@@ -6,7 +6,7 @@ import { bestSwitch, isBadMatchup, matchupScore, NO_GOOD_MOVE, scoreMove, type B
 import { makeLookups, matchupFor, moveFacts } from "./dex-facts";
 import {
   activeMon,
-  applyLine,
+  applyLineSafely,
   createView,
   otherSide,
   parseRequest,
@@ -60,7 +60,7 @@ export class CpuPlayer extends BattleStreams.BattlePlayer {
     for (const line of chunk.split("\n")) {
       if (line.startsWith("|request|")) raw = JSON.parse(line.slice("|request|".length));
       else if (line.startsWith("|error|")) this.receiveError();
-      else applyLine(this.view, line, this.side, this.lookups);
+      else applyLineSafely(this.view, line, this.side, this.lookups);
     }
     if (raw && this.view.winner === null) this.receiveRequest(raw as never);
   }

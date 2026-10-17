@@ -13,6 +13,8 @@
     "snapshot": "node scripts/snapshot-pokeapi.mjs",
     "postbuild": "node scripts/check-built-css.mjs",
     "test:strength": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests-slow/strength.test.ts\"",
+    "test:soak": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test --test-concurrency=1 \"tests-slow/soak.test.ts\"",
+    "test:room-soak": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests-slow/room-soak.test.ts\"",
     "test:room-live": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs --test \"tests-slow/room-live.test.ts\"",
     "teams:build": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./tests/register.mjs scripts/build-recommended-teams.mjs",
     "room:dev": "npm --prefix party run dev",
